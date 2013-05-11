@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-"""database.py
+"""net_finder.py
 
 This program was designed to scan through mass amounts of data to compile what
 is deemed necessary information for each MOF.  This will include building units
@@ -8,18 +8,24 @@ where the functional group is located, uptake at given conditions, and other
 such stuff.
 
 """
+import options
+from logging import info, debug, warning, error, critical
 import itertools
 import pickle
 import math
+import os
 from uuid import uuid4
-from faps.faps import Structure, Cell, Atom, Symmetry
-from genstruct.genstruct import Database, BuildingUnit, Atom_gen
-from faps.function_switch import FunctionalGroupLibrary, FunctionalGroup
 from scipy.spatial import distance
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import sys
+options = options.Options()
+sys.path.append(options.faps_dir)
+from faps import Structure, Cell, Atom, Symmetry
+from function_switch import FunctionalGroupLibrary, FunctionalGroup
+sys.path.append(options.genstruct_dir)
+from genstruct import Database, BuildingUnit, Atom_gen
 # 1. need to read in database of linkers
 # 2. need to read in database of functional groups
 # 3. need to read in sql file
@@ -31,6 +37,185 @@ import sys
 # 9. need to represent reduced topology as a graph
 # 10. assign info to the nodes
 # 11. node is the COM of the building unit.. need to compute this.
+class CSV(dict):
+    """
+    Reads in a .csv file for data parsing.
+
+    """
+    def __init__(self, filename, _MOFNAME=True):
+        self._columns = {"MOF":"MOFname", "uptake":"mmol/g",
+                      "temperature":"T/K", "pressure":"p/bar",
+                      "heat of adsorption":"hoa/kcal/mol"}
+        self.filename = filename
+        if not os.path.isfile(filename):
+            error("Could not find the file: %s"%filename)
+            sys.exit(1)
+        head_read = open(filename, "r")
+        self.headings = head_read.readline().lstrip("#").split(",")
+        head_read.close()
+        if _MOFNAME:
+            self._parse_by_mofname()
+        else:
+            self._parse_by_heading()
+
+    def obtain_data(self, column, _TYPE="float", **kwargs):
+        """return the value of the data in column, based on values of 
+        other columns assigned in the kwargs.
+
+        """
+        # create a set of lists for the data we care about
+        trunc = []
+        trunc_keys = {} 
+        # check to see if the columns are actually in the csv file
+        for ind, key in enumerate([column] + kwargs.keys()):
+            try:
+                rightkey = self._columns[key]
+            except KeyError:
+                rightkey = key
+            if rightkey not in self.headings:
+                warning("Could not find the column %s in the csv file %s "%
+                        (rightkey, self.filename) + "returning...")
+                return 0. if _TYPE is "float" else None
+            else:
+                trunc.append(self[rightkey])
+                trunc_keys[ind] = key
+                if key == column:
+                    colind = ind
+    
+        for entry in itertools.izip_longest(*trunc):
+            # tie an entry list index to column + kwargs keys
+            kwargs_id =[i for i in range(len(entry)) if trunc_keys[i] in 
+                    kwargs.keys()]
+            if all([entry[i] == kwargs[trunc_keys[i]] for i in kwargs_id]):
+                # grab the entry for the column
+                col = entry[colind]
+                return float(col) if _TYPE is "float" else col
+
+        warning("Didn't find the data point requested in the csv file %s"%
+                self.filename)
+        return 0. if _TYPE is "float" else None
+
+    def _parse_by_heading(self):
+        """The CSV dictionary will store data to heading keys"""
+        filestream = open(self.filename, "r")
+        # burn the header, as it's already read
+        # if the file is empty append zeroes..
+        if self._line_count(self.filename) <= 1: 
+            for ind in range(len(self.headings)):
+                self.setdefault(self.headings[ind], []).append(0.)
+            filestream.close()
+            return
+        burn = filestream.readline()
+        for line in filestream:
+            line = line.lstrip("#").split(",")
+            for ind, entry in enumerate(line):
+                try:
+                    entry = float(entry)
+                except ValueError:
+                    #probably a string
+                    pass
+                self.setdefault(self.headings[ind], []).append(entry)
+        filestream.close()
+
+    def _line_count(self, filename):
+        with open(filename) as f:
+            for i, l in enumerate(f):
+                pass
+        return i + 1
+
+    def _parse_by_mofname(self):
+        """The CSV dictionary will have MOFnames as headings and contain
+        sub-dictionaries for additional row data.
+
+        """
+        filestream = open(self.filename, "r")
+        try:
+            mofind = self.headings.index(self._columns["MOF"])
+        except ValueError:
+            error("the csv file %s does not have %s as a column! "%
+                    (self.filename, self._columns["MOF"]) + 
+                    "EXITING ...")
+            sys.exit(0)
+
+        try:
+            uptind = self.headings.index(self._columns["uptake"])
+        except ValueError:
+            warning("the csv file %s does not have %s as a column"%
+                    (self.filename, self._columns["uptake"]) +
+                    " the qst will be reported as 0.0 kcal/mol")
+        try:
+            hoaind = self.headings.index(self._columns["heat of adsorption"])
+        except ValueError:
+            warning("the csv file %s does not have %s as a column"%
+                    (self.filename, self._columns["heat of adsorption"]) +
+                    " the qst will be reported as 0.0 kcal/mol")
+        burn = filestream.readline()
+        for line in filestream:
+            line = line.strip()
+            if line:
+                line = line.lstrip("#").split(",")
+                mofname = line[mofind].strip()
+                mofname = clean(mofname)
+                try:
+                    uptake = line[uptind]
+                except UnboundLocalError:
+                    uptake = 0.
+                self.setdefault(mofname, {})["mmol/g"] = float(uptake)
+                try:
+                    hoa = line[hoaind]
+                except UnboundLocalError:
+                    hoa = 0.
+                self.setdefault(mofname, {})["hoa"] = float(hoa)
+        filestream.close()
+
+
+class FunctionalGroups(dict):
+    """
+    Reads in a .sqlout file and returns a dictionary containing mofnames and
+    their functionalizations.
+
+    """
+
+    def __init__(self, filename):
+        """Read in all the mofs and store in the dictionary."""
+        if not os.path.isfile(filename):
+            error("could not find the file: %s"%(filename))
+            sys.exit(1)
+        filestream = open(filename, 'r')
+        for line in filestream:
+            line = line.split("|")
+            mof = "%s.sym.%s"%(line[0], line[1])
+            # use a dictionary to sort the functionalizations
+            groups = line[2]
+            dic = {}
+            if len(groups) > 0:
+                [dic.setdefault(i.split("@")[0], []).append(i.split("@")[1])
+                        for i in groups.split(".")]
+                if len(dic.keys()) == 1:
+                    dic[None] = []
+                elif len(dic.keys()) == 0:
+                    dic[None] = []
+                    dic[False] = []
+            else:
+                dic = {None:[], False:[]}
+            # check if the entry already exists!
+            if self._check_duplicate(mof):
+                if self[mof] == dic:
+                    # duplicate
+                    debug("Duplicate found %s"%(mof))
+                    #pass
+                else:
+                    warning("duplicate found for %s"%(mof) +
+                            " but with different functionalization!")
+            else:
+                self[mof] = dic
+        filestream.close()
+
+    def _check_duplicate(self, entry):
+        """Return true if the key exists, otherwise, false."""
+        if self.has_key(entry):
+            return True
+        return False
 
 class GraphPlot(object):
     
@@ -62,6 +247,12 @@ class GraphPlot(object):
             
     def plot(self):
         plt.show()
+
+    def add_edge(self, point1, point2, label=None, colour='y'):
+        self.ax.plot3D(*zip(point1, point2), color=colour)
+        if label:
+            point = 0.5*(point1-point2) + point1
+            self.ax.text(*point, s=label)
 
     def _unused_example():
         theta = np.linspace(-4*np.pi, 4*np.pi, 100)
@@ -343,16 +534,8 @@ def gen_local_bus(mofname, bu_graphs):
         local_bus += [i for i in bu_graphs.keys() if org1 + "s" in i]
         local_bus += [i for i in bu_graphs.keys() if org2 + "s" in i]
     local_bus += [met, org1, org2]
-    return list(set((local_bus)))
+    return {i: bu_graphs[i] for i in list(set((local_bus)))}
 
-def bonded_node(gr1, gr2):
-    bonding_nodes1 = {node1: node2 for node1 in gr1.keys() for node2 in
-                    gr2.keys() if node1 in gr2[node2]['neighbours']}
-    bonding_nodes2 = {node2: node1 for node2 in gr2.keys() for node1 in
-                      gr1.keys() if node2 in gr1[node1]['neighbours']}
-    if sorted(bonding_nodes2.values()) != bonding_nodes1.keys():
-        print "WARNING: graph reports conflicting bonding"
-    return [(node1, node2) for node1, node2 in bonding_nodes1.items()]
 
 def add_name(nodeid, graph, name, _FGROUP=False, _NETID=False):
     if _FGROUP:
@@ -363,17 +546,9 @@ def add_name(nodeid, graph, name, _FGROUP=False, _NETID=False):
         graph[nodeid]['building_unit_name'] = name
 
 
-def main():
-    underlying_net = {}
-    gp = GraphPlot()
-    bu_graphs, fnl_graphs = {}, {}
-    dummy = "dummy"
-    structure_name = 'str_m2_o1_o11_f0_pcu.sym.42'
-    newcif = Structure(structure_name)
-    newcif.from_file("testdir/%s"%(structure_name), "cif", dummy)
-    cif_graph = gen_graph_faps(newcif)
-    gp.plot_cell(cell=newcif.cell.cell, colour='g')
-    bu_database = Database("testdir/met2pcu.dat")
+def generate_bu_graphs():
+    bu_graphs = {}
+    bu_database = Database(options.building_unit_file)
     for bu in bu_database:
         prefix = "o" if not bu.metal else "m"
         bu_name = prefix + str(bu.index)
@@ -383,43 +558,76 @@ def main():
             sbu_name = bu_name + "s" + str(order)
             bu_graphs[sbu_name] = gen_bu_graph(sbu)
             gen_distances(bu_graphs[sbu_name], sbu)
-    
-    local_bus = gen_local_bus(structure_name, bu_graphs)
-    # sort in decreasing order of bu length.
-    gen_cif_distance(newcif, cif_graph)
-    mutable_cif_graph = cif_graph.copy()
-    #===================
-    # Functional Groups
-    #===================
+    return bu_graphs
+
+def generate_fnl_graphs():
+    fnl_graphs = {}
     fnl_lib = FunctionalGroupLibrary()
     for name, obj in fnl_lib.items():
         fnl_graphs[name] = gen_graph_faps(obj)
         gen_distances(fnl_graphs[name], obj)
+    return fnl_graphs
 
-    f_test = fnl_graphs['NO2']
-    chunk = extract_clique(mutable_cif_graph, f_test, newcif, H_MATCH=True)
-    while chunk:
-        com = calc_com(chunk, newcif)
-        net_id = uuid4()
-        underlying_net[net_id] = {}    
-        underlying_net[net_id]['nodes'] = chunk
-        underlying_net[net_id]['com'] = com
-        underlying_net[net_id]['label'] = 'NO2'       
-        gp.add_point(com, colour='g', label='NO2')
-        chunk = extract_clique(mutable_cif_graph, f_test, newcif, H_MATCH=True)
+def clean(name):
+    if name.startswith('./run_x'):
+        name = name[10:]
+    if name.endswith('.cif'):
+        name = name[:-4]
+    elif name.endswith('.niss'):
+        name = name[:-5]
+    elif name.endswith('.out-CO2.csv'):
+        name = name[:-12]
+    elif name.endswith('-CO2.csv'):
+        name = name[:-8]
+    elif name.endswith('.flog'):
+        name = name[:-5]
+    elif name.endswith('.out.cif'):
+        name = name[:-8]
+    elif name.endswith('.tar'):
+        name = name[:-4]
+    elif name.endswith('.db'):
+        name = name[:-3]
+    elif name.endswith('.faplog'):
+        name = name[:-7]
+    elif name.endswith('.db.bak'):
+        name = name[:-7]
+    elif name.endswith('.csv'):
+        name = name[:-4]
+    return name
 
-    #===================
-    # Building Units
-    #===================
-    local_bus.pop(local_bus.index('m2'))
-    for bu in local_bus:
-        print bu
-        graph = bu_graphs[bu]
-        n_heavy = count_non_hydrogens(graph)
-        print "number of non-hydrogen atoms = %i"%(n_heavy)
-        chunk = extract_clique(mutable_cif_graph, graph, newcif, H_MATCH=False)
+def extract_fnl_chunks(mutable_cif_graph, underlying_net,
+                       local_fnl_graphs, cif, gp):
+    fnl_list = reversed(sorted([
+                (count_non_hydrogens(g),i) for i, g in 
+                local_fnl_graphs.items()]))
+    for count, fnl in fnl_list:
+        fnl_graph = local_fnl_graphs[fnl]
+        chunk = extract_clique(mutable_cif_graph, fnl_graph,
+                               cif, H_MATCH=True)
         while chunk:
-            com = calc_com(chunk, newcif)
+            com = calc_com(chunk, cif)
+            net_id = uuid4()
+            underlying_net[net_id] = {}    
+            underlying_net[net_id]['nodes'] = chunk
+            underlying_net[net_id]['com'] = com
+            underlying_net[net_id]['label'] = fnl       
+            gp.add_point(com, colour='g', label=fnl)
+            chunk = extract_clique(mutable_cif_graph, 
+                                   fnl_graph, cif, H_MATCH=True)
+
+def extract_bu_chunks(mutable_cif_graph, underlying_net,
+                      local_bu_graphs, cif, gp):
+    bu_list = reversed(sorted([
+               (count_non_hydrogens(g), i) for i, g in
+               local_bu_graphs.items()]))
+    for count, bu in bu_list:
+        print bu
+        bu_graph = local_bu_graphs[bu]
+        print "number of non-hydrogen atoms = %i"%(count)
+        chunk = extract_clique(mutable_cif_graph, bu_graph, 
+                               cif, H_MATCH=False)
+        while chunk:
+            com = calc_com(chunk, cif)
             net_id = uuid4()
             underlying_net[net_id] = {}
             underlying_net[net_id]['nodes'] = chunk
@@ -427,8 +635,72 @@ def main():
             underlying_net[net_id]['label'] = bu
             gp.add_point(com, colour='r', label=bu)
             print "leftover atoms = %i"%(len(mutable_cif_graph.keys()))
-            chunk = extract_clique(mutable_cif_graph, graph, newcif, H_MATCH=False)
+            chunk = extract_clique(mutable_cif_graph, bu_graph, 
+                                   cif, H_MATCH=False)
 
+def bonded_node(gr1, gr2):
+    bonding_nodes1 = {node1: node2 for node1 in gr1.keys() for node2 in
+                    gr2.keys() if node1 in gr2[node2]['neighbours']}
+    bonding_nodes2 = {node2: node1 for node2 in gr2.keys() for node1 in
+                      gr1.keys() if node2 in gr1[node1]['neighbours']}
+    if sorted(bonding_nodes2.values()) != sorted(bonding_nodes1.keys()):
+        warning("graph reports conflicting bonding")
+    return [(node1, node2) for node1, node2 in bonding_nodes1.items()]
+
+def calc_edges(net, gp):
+    """Calculates the edges between nodes of the net.
+    This takes into account periodic boundaries, and
+    includes the vectors and lengths of the vectors of
+    each edge.
+
+    Special case: m8, m9, m10 where there is self-bonding
+
+    """
+    edges = []
+    net_pairs = list(itertools.combinations(net.keys(), 2))
+    for n1, n2 in net_pairs:
+        # get the atomistic nodes
+        gr1 = net[n1]['nodes']
+        gr2 = net[n2]['nodes']
+        common = bonded_node(gr1, gr2) 
+        for i1, i2 in common:
+            edge_vector = net[n1]['com'] - net[n2]['com']
+            edges.append((n1, n2))
+            gp.add_edge(net[n1]['com'], net[n2]['com'])
+
+    return edges
+
+def main():
+
+    underlying_net = {}
+    dummy = "dummy"
+    bu_graphs = generate_bu_graphs()
+    fnl_graphs = generate_fnl_graphs()
+    mofs = CSV(options.csv_file)
+    functional_groups = FunctionalGroups(options.sql_file)
+    for mof in mofs.keys():
+        print mof
+        newcif = Structure(mof)
+        newcif.from_file(os.path.join(options.lookup, 
+                         mof), "cif", dummy)
+        cif_graph = gen_graph_faps(newcif)
+        gen_cif_distance(newcif, cif_graph)
+        gp = GraphPlot()
+        gp.plot_cell(cell=newcif.cell.cell, colour='g')
+        mutable_cif_graph = cif_graph.copy()
+        local_fnl_grps = functional_groups[mof].keys()
+        local_fnl_graphs = {i:k for i, k in fnl_graphs.items() if
+                            i in local_fnl_grps}
+        # TODO(pboyd): sort by number of atoms
+        extract_fnl_chunks(mutable_cif_graph, underlying_net,
+                           local_fnl_graphs, newcif, gp)
+        local_bu_graphs = gen_local_bus(mof, bu_graphs)
+        # TODO(pboyd): sort by number of atoms
+        extract_bu_chunks(mutable_cif_graph, underlying_net,
+                           local_bu_graphs, newcif, gp)
+    edge_space = calc_edges(underlying_net, gp)
+    gp.plot()
+    sys.exit()
     net_pairs = itertools.combinations(underlying_net.keys(), 2)
     for pair in net_pairs:
 
