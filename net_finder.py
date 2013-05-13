@@ -226,7 +226,7 @@ class GraphPlot(object):
 
     def plot_cell(self, cell, origin=np.zeros(3), colour='b'):
         # add axes labels
-        self.cell = cell
+        self.cell = cell.copy()
         xyz_a = (cell[0]+origin)/2.
         xyz_b = (cell[1]+origin)/2.
         xyz_c = (cell[2]+origin)/2.
@@ -235,17 +235,18 @@ class GraphPlot(object):
         self.ax.text(xyz_c[0], xyz_c[1], xyz_c[2], 'c')
 
         all_points = [np.sum(a, axis=0)+origin
-                      for a in list(powerset(cell)) if a]
+                      for a in list(powerset(self.cell)) if a]
         all_points.append(origin)
         for s, e in itertools.combinations(np.array(all_points), 2):
-            if any([zero_cross(s-e, i) for i in cell]):
+            if any([zero_cross(s-e, i) for i in self.cell]):
                 self.ax.plot3D(*zip(s, e), color=colour)
                 
     def add_point(self, point=np.zeros(3), label=None, colour='r'):
-        point = np.dot(point, self.cell) 
-        self.ax.scatter(*point, color=colour)
+        p = point.copy()
+        p = np.dot(p, self.cell) 
+        self.ax.scatter(*p, color=colour)
         if label:
-            self.ax.text(*point, s=label)
+            self.ax.text(*p, s=label)
             
     def plot(self):
         plt.show()
@@ -256,14 +257,18 @@ class GraphPlot(object):
 
         """
         # FIXME(pboyd): something wrong here with the orientation of the vectors
-        point = origin + vector
-        print "originating point", origin
-        print "extension of vector", point
+        point = origin - vector
         max = [0, 0]
-        for ind, mag in enumerate(point):
-            if abs(mag) > abs(max[1]):
-                max = [ind, mag]
-        if (max[1] > 1.) or (max[1] < 0.):
+        periodics = [(ind, mag) for ind, mag in enumerate(point)
+                      if mag > 1. or mag < 0.]
+        # the check should be if any of the values are greater than one or
+        # less than zero
+        #for ind, mag in enumerate(point):
+        #    if abs(mag) > abs(max[1]):
+        #        max = [ind, mag]
+        if periodics:
+            # temp fix
+            max = periodics[0]
             # periodic boundary found
             # plane is defined by the other cell vectors
             plane_vec1, plane_vec2 = np.delete(self.cell, max[0], axis=0)
@@ -275,10 +280,7 @@ class GraphPlot(object):
             point2 = point_of_intersection(point1, vector1, plane_pt,
                                            plane_vec1, plane_vec2)
             # periodic shift of point2
-            print "point of intersection", point2
-            print "magnitude of vector", max, (np.floor(max[1])*-1)
             point3 = point2 + np.floor(max[1])*-1 * self.cell[max[0]]
-            print "second poi", point3
             # periodic shift of point
             point4 = np.dot(point - np.floor(point), self.cell)
 
@@ -338,7 +340,6 @@ def gen_cif_distance(newcif, graph):
     inv = newcif.cell.inverse
     for atom in newcif.atoms:
         atom.scaled_pos = np.array(atom.fpos(inv))
-    #print len(newcif.atoms)
     atom_pairs = list(itertools.combinations(newcif.atoms, 2))
     for pair in atom_pairs:
         dist = pair[0].scaled_pos - pair[1].scaled_pos
@@ -396,7 +397,8 @@ def calc_com(chunk, obj):
         for node in iter_neighbours(chunk.keys()[0], chunk):
             vals = chunk[node]
             atom = get_atom(node, obj)
-            neighbours = vals['neighbours']
+            # make sure not to shift adjacent nodes on other chunks
+            neighbours = [i for i in vals['neighbours'] if i in chunk.keys()]
             for nodeid in neighbours:
                 adj_atom = get_atom(nodeid, obj)
                 diff = adj_atom.scaled_pos - atom.scaled_pos
@@ -409,9 +411,11 @@ def calc_com(chunk, obj):
         # be shifted, along with the nodes themselves. 
         com = np.sum(positions, axis=0) / float(len(positions))
         com_shift = np.floor(com)
+
         for node in chunk.keys():
             atom = get_atom(node, obj)
             atom.scaled_pos -= com_shift
+
         return com - com_shift 
     
     elif isinstance(obj, FunctionalGroup):
@@ -594,7 +598,7 @@ def match(clique, g1, g2, H_MATCH):
         return False
     return True
 
-def extract_clique(g1, g2, newcif, H_MATCH=True):
+def extract_clique(g1, g2, H_MATCH=True):
     kk = {}
     C = gen_correspondence_graph(g1, g2)
     gen_correspondence_neighbours(C, g1, g2, tol=0.3)
@@ -682,7 +686,7 @@ def extract_fnl_chunks(mutable_cif_graph, underlying_net,
     for count, fnl in fnl_list:
         fnl_graph = local_fnl_graphs[fnl]
         chunk = extract_clique(mutable_cif_graph, fnl_graph,
-                               cif, H_MATCH=True)
+                               H_MATCH=True)
         while chunk:
             com = calc_com(chunk, cif)
             net_id = uuid4()
@@ -692,7 +696,7 @@ def extract_fnl_chunks(mutable_cif_graph, underlying_net,
             underlying_net[net_id]['label'] = fnl       
             gp.add_point(com, colour='g', label=fnl)
             chunk = extract_clique(mutable_cif_graph, 
-                                   fnl_graph, cif, H_MATCH=True)
+                                   fnl_graph, H_MATCH=True)
 
 def extract_bu_chunks(mutable_cif_graph, underlying_net,
                       local_bu_graphs, cif, gp):
@@ -704,7 +708,7 @@ def extract_bu_chunks(mutable_cif_graph, underlying_net,
         bu_graph = local_bu_graphs[bu]
         print "number of non-hydrogen atoms = %i"%(count)
         chunk = extract_clique(mutable_cif_graph, bu_graph, 
-                               cif, H_MATCH=False)
+                               H_MATCH=False)
         while chunk:
             com = calc_com(chunk, cif)
             net_id = uuid4()
@@ -715,7 +719,7 @@ def extract_bu_chunks(mutable_cif_graph, underlying_net,
             gp.add_point(com, colour='r', label=bu)
             print "leftover atoms = %i"%(len(mutable_cif_graph.keys()))
             chunk = extract_clique(mutable_cif_graph, bu_graph, 
-                                   cif, H_MATCH=False)
+                                   H_MATCH=False)
 
 def bonded_node(gr1, gr2):
     bonding_nodes1 = {node1: node2 for node1 in gr1.keys() for node2 in
@@ -739,30 +743,26 @@ def eval_edge(com1, atom1, com2, atom2, cif):
 
     """
     edge = com1 - com2
-    atom_bond = get_atom(atom1, cif).scaled_pos - \
-                get_atom(atom2, cif).scaled_pos
-    print "atom bond", atom_bond
+    sp1 = get_atom(atom1, cif).scaled_pos
+    sp2 = get_atom(atom2, cif).scaled_pos
+    atom_bond = sp1 - sp2 
     reduced_atom_bond = atom_bond - np.round(atom_bond)
     # project onto the edge
     proj_e = proj_vu(edge, reduced_atom_bond)
     if np.allclose(
             np.dot(edge/vect_len(edge), proj_e/vect_len(proj_e)),
-            -1.) or any([abs(i) > 0.5 for i in atom_bond]):
+            -1.) or vect_len(atom_bond) > 0.5:
         # determine which cell direction to choose
-        print 'old edge', edge
         max = [0,0]
         for ind, val in enumerate(edge):
             if abs(val) > abs(max[1]):
                 max = [ind, val]
         newcom = com2.copy()
-        print 'old com, max', newcom, max[1]
         if max[1] < 0:
             newcom[max[0]] += np.floor(max[1])
         else:
             newcom[max[0]] += np.ceil(max[1])
-        print 'new com', newcom
         edge = com1 - newcom
-        print 'new edge', edge
     return edge 
 
 def calc_edges(net, cif, gp):
@@ -783,12 +783,14 @@ def calc_edges(net, cif, gp):
         gr2 = net[n2]['nodes']
         com2 = net[n2]['com']
         # re-calculated COMs
-        print net[n1]['label'], net[n2]['label']
         common = bonded_node(gr1, gr2) 
+        if common:
+            print net[n1]['label'], net[n2]['label']
         for i1, i2 in common:
+            at1 = get_atom(i1, cif)
+            at2 = get_atom(i2, cif)
             # determine the vector which connects the two atoms
             edge_vector = eval_edge(com1, i1, com2, i2, cif)
-            print "edge", edge_vector
             edges.append((n1, n2, edge_vector))
             gp.add_edge(edge_vector, origin=com1)
 
@@ -822,20 +824,6 @@ def main():
                            local_bu_graphs, newcif, gp)
     edge_space = calc_edges(underlying_net, newcif, gp)
     gp.plot()
-    sys.exit()
-    net_pairs = itertools.combinations(underlying_net.keys(), 2)
-    for pair in net_pairs:
 
-        
-        graph1 = underlying_net[pair[0]]['nodes']
-        graph2 = underlying_net[pair[1]]['nodes']
-        bonds = bonded_node(graph1, graph2)
-        if bonds:
-            print underlying_net[pair[0]]['label'], underlying_net[pair[1]]['label']
-            print bonds
-    for netnode, stuff in underlying_net.items():
-        print netnode
-        
-    gp.plot()
 if __name__ == "__main__":
     main()
