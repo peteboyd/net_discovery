@@ -222,9 +222,11 @@ class GraphPlot(object):
     def __init__(self):
         self.fig = plt.figure()
         self.ax = self.fig.add_subplot(111, projection='3d')
-        
-    def plot_cell(self, cell=np.identity(3), origin=np.zeros(3), colour='b'):
+        self.cell = np.identity(3)
+
+    def plot_cell(self, cell, origin=np.zeros(3), colour='b'):
         # add axes labels
+        self.cell = cell
         xyz_a = (cell[0]+origin)/2.
         xyz_b = (cell[1]+origin)/2.
         xyz_c = (cell[2]+origin)/2.
@@ -240,7 +242,7 @@ class GraphPlot(object):
                 self.ax.plot3D(*zip(s, e), color=colour)
                 
     def add_point(self, point=np.zeros(3), label=None, colour='r'):
-        
+        point = np.dot(point, self.cell) 
         self.ax.scatter(*point, color=colour)
         if label:
             self.ax.text(*point, s=label)
@@ -248,11 +250,48 @@ class GraphPlot(object):
     def plot(self):
         plt.show()
 
-    def add_edge(self, point1, point2, label=None, colour='y'):
-        self.ax.plot3D(*zip(point1, point2), color=colour)
+    def add_edge(self, vector, origin=np.zeros(3), label=None, colour='y'):
+        """Accounts for periodic boundaries by splitting an edge where
+        it intersects with the plane of the boundary conditions.
+
+        """
+
+        point = origin + vector
+        print "originating point", origin
+        print "extension of vector", point
+        max = [0, 0]
+        for ind, mag in enumerate(point):
+            if abs(mag) > abs(max[1]):
+                max = [ind, mag]
+        if (max[1] > 1.) or (max[1] < 0.):
+            # periodic boundary found
+            # plane is defined by the other cell vectors
+            plane_vec1, plane_vec2 = np.delete(self.cell, max[0], axis=0)
+            # plane point is defined by the cell vector
+            plane_pt = np.trunc(max[1]) * self.cell[max[0]]
+
+            point1 = np.dot(origin, self.cell)
+            vector1 = np.dot(vector, self.cell)
+            point2 = point_of_intersection(point1, vector1, plane_pt,
+                                           plane_vec1, plane_vec2)
+            # periodic shift of point2
+            print "point of intersection", point2
+            print "magnitude of vector", max, (np.floor(max[1])*-1)
+            point3 = point2 + np.floor(max[1])*-1 * self.cell[max[0]]
+            print "second poi", point3
+            # periodic shift of point
+            point4 = np.dot(point - np.floor(point), self.cell)
+
+            self.ax.plot3D(*zip(point1, point2), color=colour)
+            self.ax.plot3D(*zip(point3, point4), color=colour)
+        else:
+            point1 = np.dot(origin, self.cell)
+            point2 = np.dot(point, self.cell)
+            self.ax.plot3D(*zip(point1, point2), color=colour)
         if label:
-            point = 0.5*(point1-point2) + point1
-            self.ax.text(*point, s=label)
+            p = origin + 0.5*vector
+            p = p - np.floor(p)
+            self.ax.text(*p, s=label)
 
     def _unused_example():
         theta = np.linspace(-4*np.pi, 4*np.pi, 100)
@@ -264,7 +303,29 @@ class GraphPlot(object):
         ax.legend()
         plt.show()
         sys.exit()
-        
+ 
+def point_of_intersection(p_edge, edge, p_plane, plane_vec1, plane_vec2):
+    """
+    Returns a point of intersection between an edge and a plane
+    p_edge is a point on the edge vector
+    edge is the vector direction
+    p_plane is a point on the plane
+    plane_vec1 represents one of the vector directions of the plane
+    plane_vec2 represents the second vector of the plane
+
+    """
+    n = np.cross(plane_vec1, plane_vec2)
+    n = n / np.linalg.norm(n)
+    l = edge / np.linalg.norm(edge)
+    
+    ldotn = np.dot(l, n)
+    pdotn = np.dot(p_plane - p_edge, n)
+    if ldotn == 0.:
+        return 0.
+    if pdotn == 0.:
+        return 0.
+    return pdotn/ldotn*l + p_edge 
+
 def round_i(i):
     """Sorts the fractional value i to the minimum image"""
     if i > 0.5:
@@ -343,10 +404,15 @@ def calc_com(chunk, obj):
         # ignore the hydrogen atoms for the com calc
         positions = np.array([i.scaled_pos for i in obj.atoms
                               if i.nodeid in chunk.keys() and
-                              not i.uff_type.startswith("H")])                
-        com = np.array([i - math.floor(i) for i in
-                        np.sum(positions, axis=0) / float(len(positions))])
-        return np.dot(com, obj.cell.cell)
+                              not i.uff_type.startswith("H")])
+        # note COM might not be in the unit cell, this must
+        # be shifted, along with the nodes themselves. 
+        com = np.sum(positions, axis=0) / float(len(positions))
+        com_shift = np.floor(com)
+        for node in chunk.keys():
+            atom = get_atom(node, obj)
+            atom.scaled_pos -= com_shift
+        return com - com_shift 
     
     elif isinstance(obj, FunctionalGroup):
         positions = np.array([i.pos for i in obj.atoms
@@ -395,6 +461,19 @@ def N(v, g):
         return []
     
 def bk(R, P, X, g):
+    """Bron-Kerbosch recursive algorithm"""
+    if not any((P,X)):
+        yield R
+    for v in P[:]:
+        R_v = R + [v]
+        P_v = [v1 for v1 in P if v1 in N(v, g)] # p intersects N(vertex)
+        X_v = [v1 for v1 in X if v1 in N(v, g)] # x intersects N(vertex)
+        for r in bk(R_v, P_v, X_v, g):
+            yield r
+        P.remove(v)
+        X.append(v)
+
+def bk_pivot(R, P, X, g):
     """Bron-Kerbosch recursive algorithm"""
     if not any((P,X)):
         yield R
@@ -647,13 +726,52 @@ def bonded_node(gr1, gr2):
         warning("graph reports conflicting bonding")
     return [(node1, node2) for node1, node2 in bonding_nodes1.items()]
 
-def calc_edges(net, gp):
+def proj_vu(v, u):
+    """Projects the vector u onto the vector v."""
+    return v*np.dot(u, v) / np.linalg.norm(v)
+
+def vect_len(vector):
+    return np.linalg.norm(vector)
+
+def eval_edge(com1, atom1, com2, atom2, cif):
+    """Returns an edge which is correctly oriented
+    and shifted by the periodic boundaries.
+
+    """
+    edge = com1 - com2
+    atom_bond = get_atom(atom1, cif).scaled_pos - \
+                get_atom(atom2, cif).scaled_pos
+
+    atom_bond -= np.round(atom_bond)
+    # project onto the edge
+    proj_e = proj_vu(edge, atom_bond)
+    if np.allclose(
+            np.dot(edge/vect_len(edge), proj_e/vect_len(proj_e)),
+            -1.):
+        # determine which cell direction to choose
+        print 'old edge', edge
+        max = [0,0]
+        for ind, val in enumerate(edge):
+            if abs(val) > abs(max[1]):
+                max = [ind, val]
+        newcom = com2.copy()
+        print 'old com, max', newcom, max[1]
+        if max[1] < 0:
+            newcom[max[0]] += np.floor(max[1])
+        else:
+            newcom[max[0]] += np.ceil(max[1])
+        print 'new com', newcom
+        edge = com1 - newcom
+        print 'new edge', edge
+    return edge 
+
+def calc_edges(net, cif, gp):
     """Calculates the edges between nodes of the net.
     This takes into account periodic boundaries, and
     includes the vectors and lengths of the vectors of
     each edge.
 
-    Special case: m8, m9, m10 where there is self-bonding
+    Special case: m8, m9, m10 has self-bonding
 
     """
     edges = []
@@ -661,12 +779,17 @@ def calc_edges(net, gp):
     for n1, n2 in net_pairs:
         # get the atomistic nodes
         gr1 = net[n1]['nodes']
+        com1 = net[n1]['com']
         gr2 = net[n2]['nodes']
+        com2 = net[n2]['com']
+        # re-calculated COMs
         common = bonded_node(gr1, gr2) 
         for i1, i2 in common:
-            edge_vector = net[n1]['com'] - net[n2]['com']
-            edges.append((n1, n2))
-            gp.add_edge(net[n1]['com'], net[n2]['com'])
+            # determine the vector which connects the two atoms
+            edge_vector = eval_edge(com1, i1, com2, i2, cif)
+            print "edge", edge_vector
+            edges.append((n1, n2, edge_vector))
+            gp.add_edge(edge_vector, origin=com1)
 
     return edges
 
@@ -691,14 +814,12 @@ def main():
         local_fnl_grps = functional_groups[mof].keys()
         local_fnl_graphs = {i:k for i, k in fnl_graphs.items() if
                             i in local_fnl_grps}
-        # TODO(pboyd): sort by number of atoms
         extract_fnl_chunks(mutable_cif_graph, underlying_net,
                            local_fnl_graphs, newcif, gp)
         local_bu_graphs = gen_local_bus(mof, bu_graphs)
-        # TODO(pboyd): sort by number of atoms
         extract_bu_chunks(mutable_cif_graph, underlying_net,
                            local_bu_graphs, newcif, gp)
-    edge_space = calc_edges(underlying_net, gp)
+    edge_space = calc_edges(underlying_net, newcif, gp)
     gp.plot()
     sys.exit()
     net_pairs = itertools.combinations(underlying_net.keys(), 2)
