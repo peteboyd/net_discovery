@@ -328,12 +328,16 @@ def point_of_intersection(p_edge, edge, p_plane, plane_vec1, plane_vec2):
         return np.zeros(3)
     return pdotn/ldotn*l + p_edge 
 
-def round_i(i):
-    """Sorts the fractional value i to the minimum image"""
-    if i > 0.5:
-        i = i - 1
-    elif i < -0.5:
-        i = i + 1
+def round_max(i):
+    """Sorts the maximal fractional value i to the minimum image"""
+    max = [0,0]
+    for ind, element in enumerate(i):
+        if abs(element) > abs(max[1]):
+            max = [ind, element]
+    if max[1] > 0.5:
+        i[max[0]] = max[1] - 1.
+    elif max[1] < -0.5:
+        i[max[0]] = max[1] + 1.
     return i
 
 def gen_cif_distance(newcif, graph):
@@ -341,14 +345,19 @@ def gen_cif_distance(newcif, graph):
     for atom in newcif.atoms:
         atom.scaled_pos = np.array(atom.fpos(inv))
     atom_pairs = list(itertools.combinations(newcif.atoms, 2))
+    # have to expand about each atom, the minimum image!!!
+    # the minimum image distance can't be the solution because
+    # the distance between two atoms in a molecule may 
+    # be longer than the minimum image.
+    # without a-priori knowledge of the 
     for pair in atom_pairs:
         dist = pair[0].scaled_pos - pair[1].scaled_pos
-        v_dist = np.array([round_i(i) for i in dist])
+        v_dist = round_max(dist)
         vect = np.dot(v_dist, newcif.cell.cell)
         length = np.linalg.norm(vect)
         graph[pair[0].nodeid]['distance'][pair[1].nodeid] = length
         graph[pair[1].nodeid]['distance'][pair[0].nodeid] = length
-        
+
 def gen_graph_faps(faps_obj):
     _graph = {}
     for idx, atom in enumerate(faps_obj.atoms):
@@ -358,6 +367,7 @@ def gen_graph_faps(faps_obj):
         _graph[atom.nodeid]['neighbours'] = []
         _graph[atom.nodeid]['atomidx'] = idx
         _graph[atom.nodeid]['type'] = atom.uff_type
+        _graph[atom.nodeid]['element'] = atom.type
         _graph[atom.nodeid]['distance'] = {}
 
     for bond in faps_obj.bonds:
@@ -441,7 +451,8 @@ def gen_distances(graph, obj):
         dist = distances[nodexx1, nodexx2]
         graph[nodeid1]['distance'][nodeid2] = dist
         graph[nodeid2]['distance'][nodeid1] = dist
-        
+
+
 def gen_bu_graph(bu):
     _graph = {}
     for idx, atom in enumerate(bu.atoms):
@@ -450,6 +461,7 @@ def gen_bu_graph(bu):
     for atom in bu.atoms:
         _graph.setdefault(atom.nodeid, {})
         _graph[atom.nodeid]['type'] = atom.force_field_type
+        _graph[atom.nodeid]['element'] = atom.element
         _graph[atom.nodeid]['atomidx'] = atom.idx
         _graph[atom.nodeid]['distance'] = {}
         
@@ -509,7 +521,7 @@ def gen_correspondence_graph(g1, g2):
     # connect two nodes of the correspondence graph if their sub nodes are
     # connected
 
-def gen_correspondence_neighbours(graph, g1, g2, tol = 0.1):
+def gen_correspondence_neighbours(graph, g1, g2, tol=0.3):
     """Establishes 'edges' between nodes in the correspondence graph.
     Bond tolerance set to 0.1 angstroms... probably needs to
     be a bit more than this.
@@ -525,7 +537,7 @@ def gen_correspondence_neighbours(graph, g1, g2, tol = 0.1):
         graph2_node2 = pair[1][1]
         g1_dist = g1[graph1_node1]['distance'][graph1_node2]
         g2_dist = g2[graph2_node1]['distance'][graph2_node2]
-        if g1_dist - g2_dist <= tol:
+        if abs(g1_dist - g2_dist) <= tol:
             # they are neighbours!
             graph[pair[0]]['neighbours'].append(pair[1])
             graph[pair[1]]['neighbours'].append(pair[0])
@@ -537,7 +549,8 @@ def isequal(node_pair, g1, g2):
     """
     nodeid1 = node_pair[0]
     nodeid2 = node_pair[1]
-    if not (g1[nodeid1]['type'] == g2[nodeid2]['type']):
+    #if not (g1[nodeid1]['type'] == g2[nodeid2]['type']):
+    if not (g1[nodeid1]['element'] == g2[nodeid2]['element']):
         return False
     return True
     # atom type checks of neighbours?
@@ -598,10 +611,10 @@ def match(clique, g1, g2, H_MATCH):
         return False
     return True
 
-def extract_clique(g1, g2, H_MATCH=True):
+def extract_clique(g1, g2, H_MATCH=True, tol=0.3):
     kk = {}
     C = gen_correspondence_graph(g1, g2)
-    gen_correspondence_neighbours(C, g1, g2, tol=0.3)
+    gen_correspondence_neighbours(C, g1, g2, tol=tol)
     cliques = sorted(list(bk([], C.keys(), [], C)), reverse=True)
     # remove duplicate entries with just different order.
     [kk.setdefault(tuple(sorted([j[0] for j in i])), 0) for i in cliques]
@@ -686,7 +699,7 @@ def extract_fnl_chunks(mutable_cif_graph, underlying_net,
     for count, fnl in fnl_list:
         fnl_graph = local_fnl_graphs[fnl]
         chunk = extract_clique(mutable_cif_graph, fnl_graph,
-                               H_MATCH=True)
+                               H_MATCH=True, tol=0.3)
         while chunk:
             com = calc_com(chunk, cif)
             net_id = uuid4()
@@ -696,7 +709,7 @@ def extract_fnl_chunks(mutable_cif_graph, underlying_net,
             underlying_net[net_id]['label'] = fnl       
             gp.add_point(com, colour='g', label=fnl)
             chunk = extract_clique(mutable_cif_graph, 
-                                   fnl_graph, H_MATCH=True)
+                                   fnl_graph, H_MATCH=True, tol=0.3)
 
 def extract_bu_chunks(mutable_cif_graph, underlying_net,
                       local_bu_graphs, cif, gp):
@@ -708,7 +721,7 @@ def extract_bu_chunks(mutable_cif_graph, underlying_net,
         bu_graph = local_bu_graphs[bu]
         print "number of non-hydrogen atoms = %i"%(count)
         chunk = extract_clique(mutable_cif_graph, bu_graph, 
-                               H_MATCH=False)
+                               H_MATCH=False, tol=0.3)
         while chunk:
             com = calc_com(chunk, cif)
             net_id = uuid4()
@@ -719,7 +732,7 @@ def extract_bu_chunks(mutable_cif_graph, underlying_net,
             gp.add_point(com, colour='r', label=bu)
             print "leftover atoms = %i"%(len(mutable_cif_graph.keys()))
             chunk = extract_clique(mutable_cif_graph, bu_graph, 
-                                   H_MATCH=False)
+                                   H_MATCH=False, tol=0.3)
 
 def bonded_node(gr1, gr2):
     bonding_nodes1 = {node1: node2 for node1 in gr1.keys() for node2 in
@@ -811,12 +824,13 @@ def main():
                          mof), "cif", dummy)
         cif_graph = gen_graph_faps(newcif)
         gen_cif_distance(newcif, cif_graph)
+        
         gp = GraphPlot()
         gp.plot_cell(cell=newcif.cell.cell, colour='g')
         mutable_cif_graph = cif_graph.copy()
-        local_fnl_grps = functional_groups[mof].keys()
+        local_fnl_grps = [i for i in functional_groups[mof].keys() if i]
         local_fnl_graphs = {i:k for i, k in fnl_graphs.items() if
-                            i in local_fnl_grps}
+                            i in local_fnl_grps} 
         extract_fnl_chunks(mutable_cif_graph, underlying_net,
                            local_fnl_graphs, newcif, gp)
         local_bu_graphs = gen_local_bus(mof, bu_graphs)

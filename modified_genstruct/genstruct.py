@@ -985,6 +985,7 @@ class Database(list):
                                     items=file.items(building_unit)))
             self[-1].internal_index = idx
         # special considerations for linked building units
+        pop_remove = []
         for ind, bu in enumerate(self):
             if bu.parent:
                 # link up this building unit with it's parent
@@ -994,7 +995,10 @@ class Database(list):
                     # raise error
                     error("Multiple building units with the same name!")
                 parent[0].specialbu.append(deepcopy(bu))
-                self.pop(ind)
+                pop_remove.append(ind)
+        pop_remove.sort()
+        for i in reversed(pop_remove):
+            self.pop(i)
       
 class Generate(object):
     """
