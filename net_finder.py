@@ -255,7 +255,7 @@ class GraphPlot(object):
         it intersects with the plane of the boundary conditions.
 
         """
-
+        # FIXME(pboyd): something wrong here with the orientation of the vectors
         point = origin + vector
         print "originating point", origin
         print "extension of vector", point
@@ -282,12 +282,12 @@ class GraphPlot(object):
             # periodic shift of point
             point4 = np.dot(point - np.floor(point), self.cell)
 
-            self.ax.plot3D(*zip(point1, point2), color=colour)
-            self.ax.plot3D(*zip(point3, point4), color=colour)
+            self.ax.plot3D(*zip(point2, point1), color=colour)
+            self.ax.plot3D(*zip(point4, point3), color=colour)
         else:
             point1 = np.dot(origin, self.cell)
             point2 = np.dot(point, self.cell)
-            self.ax.plot3D(*zip(point1, point2), color=colour)
+            self.ax.plot3D(*zip(point2, point1), color=colour)
         if label:
             p = origin + 0.5*vector
             p = p - np.floor(p)
@@ -321,9 +321,9 @@ def point_of_intersection(p_edge, edge, p_plane, plane_vec1, plane_vec2):
     ldotn = np.dot(l, n)
     pdotn = np.dot(p_plane - p_edge, n)
     if ldotn == 0.:
-        return 0.
+        return np.zeros(3) 
     if pdotn == 0.:
-        return 0.
+        return np.zeros(3)
     return pdotn/ldotn*l + p_edge 
 
 def round_i(i):
@@ -741,13 +741,13 @@ def eval_edge(com1, atom1, com2, atom2, cif):
     edge = com1 - com2
     atom_bond = get_atom(atom1, cif).scaled_pos - \
                 get_atom(atom2, cif).scaled_pos
-
-    atom_bond -= np.round(atom_bond)
+    print "atom bond", atom_bond
+    reduced_atom_bond = atom_bond - np.round(atom_bond)
     # project onto the edge
-    proj_e = proj_vu(edge, atom_bond)
+    proj_e = proj_vu(edge, reduced_atom_bond)
     if np.allclose(
             np.dot(edge/vect_len(edge), proj_e/vect_len(proj_e)),
-            -1.):
+            -1.) or any([abs(i) > 0.5 for i in atom_bond]):
         # determine which cell direction to choose
         print 'old edge', edge
         max = [0,0]
@@ -783,6 +783,7 @@ def calc_edges(net, cif, gp):
         gr2 = net[n2]['nodes']
         com2 = net[n2]['com']
         # re-calculated COMs
+        print net[n1]['label'], net[n2]['label']
         common = bonded_node(gr1, gr2) 
         for i1, i2 in common:
             # determine the vector which connects the two atoms
