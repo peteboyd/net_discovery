@@ -20,10 +20,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import sys
+import copy
 options = options.Options()
 sys.path.append(options.faps_dir)
 from faps import Structure, Cell, Atom, Symmetry
 from function_switch import FunctionalGroupLibrary, FunctionalGroup
+from elements import CCDC_BOND_ORDERS
+import time
 sys.path.append(options.genstruct_dir)
 from genstruct import Database, BuildingUnit, Atom_gen
 # 1. need to read in database of linkers
@@ -107,14 +110,15 @@ class CSV(dict):
             return
         burn = filestream.readline()
         for line in filestream:
-            line = line.lstrip("#").split(",")
-            for ind, entry in enumerate(line):
-                try:
-                    entry = float(entry)
-                except ValueError:
-                    #probably a string
-                    pass
-                self.setdefault(self.headings[ind], []).append(entry)
+            if not line.startswith("#"):
+                line = line.split(",")
+                for ind, entry in enumerate(line):
+                    try:
+                        entry = float(entry)
+                    except ValueError:
+                        #probably a string
+                        pass
+                    self.setdefault(self.headings[ind], []).append(entry)
         filestream.close()
 
     def _line_count(self, filename):
@@ -152,8 +156,8 @@ class CSV(dict):
         burn = filestream.readline()
         for line in filestream:
             line = line.strip()
-            if line:
-                line = line.lstrip("#").split(",")
+            if line and not line.startswith("#"):
+                line = line.split(",")
                 mofname = line[mofind].strip()
                 mofname = clean(mofname)
                 try:
@@ -256,7 +260,6 @@ class GraphPlot(object):
         it intersects with the plane of the boundary conditions.
 
         """
-        # FIXME(pboyd): something wrong here with the orientation of the vectors
         point = origin - vector
         max = [0, 0]
         periodics = [(ind, mag) for ind, mag in enumerate(point)
@@ -305,7 +308,74 @@ class GraphPlot(object):
         ax.legend()
         plt.show()
         sys.exit()
- 
+
+def to_cif(atoms, cell, bonds, name):
+    """Return a CIF file with bonding and atom types."""
+
+    inv_cell = cell.inverse
+
+    type_count = {}
+
+    atom_part = []
+    for idx, atom in enumerate(atoms):
+        if atom is None:
+            # blanks are left in here
+            continue
+        if hasattr(atom, 'uff_type') and atom.uff_type is not None:
+            uff_type = atom.uff_type
+        else:
+            uff_type = '?'
+        if atom.element in type_count:
+            type_count[atom.element] += 1
+        else:
+            type_count[atom.element] = 1
+        atom.site = "%s%i" % (atom.element, type_count[atom.element])
+        atom_part.append("%-5s %-5s %-5s " % (atom.site, atom.element, uff_type))
+        atom_part.append("%f %f %f " % tuple(atom.scaled_pos))
+        atom_part.append("%f\n" % atom.charge)
+
+    bond_part = []
+    for bond, order in bonds.items():
+        try:
+            bond_part.append("%-5s %-5s %-5s\n" %
+                             (atoms[bond[0]].site, atoms[bond[1]].site,
+                              CCDC_BOND_ORDERS[order]))
+        except AttributeError:
+            # one of the atoms is None so skip
+            debug("cif NoneType atom")
+
+    cif_file = [
+        "data_%s\n" % name.replace(' ', '_'),
+        "%-33s %s\n" % ("_audit_creation_date", time.strftime('%Y-%m-%dT%H:%M:%S%z')),
+        "%-33s %s\n" % ("_audit_creation_method", "Derpy_derp_derp"),
+        "%-33s %s\n" % ("_symmetry_space_group_name_H-M", "P1"),
+        "%-33s %s\n" % ("_symmetry_Int_Tables_number", "1"),
+        "%-33s %s\n" % ("_space_group_crystal_system", cell.crystal_system),
+        "%-33s %-.10s\n" % ("_cell_length_a", cell.a),
+        "%-33s %-.10s\n" % ("_cell_length_b", cell.b),
+        "%-33s %-.10s\n" % ("_cell_length_c", cell.c),
+        "%-33s %-.10s\n" % ("_cell_angle_alpha", cell.alpha),
+        "%-33s %-.10s\n" % ("_cell_angle_beta", cell.beta),
+        "%-33s %-.10s\n" % ("_cell_angle_gamma", cell.gamma),
+        "%-33s %s\n" % ("_cell_volume", cell.volume),
+        # start of atom loops
+        "\nloop_\n",
+        "_atom_site_label\n",
+        "_atom_site_type_symbol\n",
+        "_atom_site_description\n",
+        "_atom_site_fract_x\n",
+        "_atom_site_fract_y\n",
+        "_atom_site_fract_z\n",
+        "_atom_type_partial_charge\n"] + atom_part + [
+        # bonding loop
+        "\nloop_\n",
+        "_geom_bond_atom_site_label_1\n",
+        "_geom_bond_atom_site_label_2\n",
+#        "_geom_bond_distance\n",
+        "_ccdc_geom_bond_type\n"] + bond_part
+
+    return cif_file
+
 def point_of_intersection(p_edge, edge, p_plane, plane_vec1, plane_vec2):
     """
     Returns a point of intersection between an edge and a plane
@@ -325,38 +395,90 @@ def point_of_intersection(p_edge, edge, p_plane, plane_vec1, plane_vec2):
     if ldotn == 0.:
         return np.zeros(3) 
     if pdotn == 0.:
-        return np.zeros(3)
+        return p_edge 
     return pdotn/ldotn*l + p_edge 
 
-def round_max(i):
-    """Sorts the maximal fractional value i to the minimum image"""
-    max = [0,0]
-    for ind, element in enumerate(i):
-        if abs(element) > abs(max[1]):
-            max = [ind, element]
-    if max[1] > 0.5:
-        i[max[0]] = max[1] - 1.
-    elif max[1] < -0.5:
-        i[max[0]] = max[1] + 1.
-    return i
+def cut_carboxylate_bridge(node, cif, graph_cut):
+    """Deletes the C-C bond from a carboxylate bridging
+    moiety.
 
-def gen_cif_distance(newcif, graph):
-    inv = newcif.cell.inverse
-    for atom in newcif.atoms:
-        atom.scaled_pos = np.array(atom.fpos(inv))
-    atom_pairs = list(itertools.combinations(newcif.atoms, 2))
-    # have to expand about each atom, the minimum image!!!
-    # the minimum image distance can't be the solution because
-    # the distance between two atoms in a molecule may 
-    # be longer than the minimum image.
-    # without a-priori knowledge of the 
+    """
+    neighbours = N(node, graph_cut)
+    neighbour_types = [graph_cut[i]['element'] for i in neighbours]
+    if ["C", "O", "O"] == sorted(neighbour_types):
+        o_nodes = [i for i in neighbours if graph_cut[i]['element'] == "O"]
+        extended_neighbours = [graph_cut[i]['element'] for j 
+                               in o_nodes for i in N(j, graph_cut)]
+        if not any([i == "H" for i in extended_neighbours]):
+            c_node = [i for i in N(node, graph_cut) if
+                      graph_cut[i]['element'] == "C"]
+            c_node = c_node[0]
+            c_ind = graph_cut[node]['neighbours'].index(c_node)
+            graph_cut[node]['neighbours'].pop(c_ind)
+            c_ind = graph_cut[c_node]['neighbours'].index(node)
+            graph_cut[c_node]['neighbours'].pop(c_ind)
+    return
+
+def cut_metal_nitrogen_bridge(node, cif, graph_cut):
+    metals = ["Cu", "Zn", "In", "Cr", "Zr", "V"]
+    neighbours = N(node, graph_cut)
+    neighbour_types = [graph_cut[i]['element'] for i in neighbours]
+    if any([i == j for i in metals for j in neighbour_types]):
+        m_node = [i for i in N(node, graph_cut) if
+                   graph_cut[i]['element'] in metals]
+        m_node = m_node[0]
+        m_ind = graph_cut[node]['neighbours'].index(m_node)
+        graph_cut[node]['neighbours'].pop(m_ind)
+        n_ind = graph_cut[m_node]['neighbours'].index(node)
+        graph_cut[m_node]['neighbours'].pop(n_ind)
+    return
+
+def gen_cif_distance(cif, graph):
+    """This computes the distances between molecular atoms.  These
+    are established by 'cutting' the cif at intervals defined by a
+    particular moiety.  In the initial case only carboxylates are 
+    used.
+
+    """
+    inv = cif.cell.inverse
+    graph_cut = copy.deepcopy(graph)
+    for atom in cif.atoms:
+        atom.scaled_pos = np.array(atom.ifpos(inv))
+        node = atom.nodeid 
+        if atom.uff_type == 'C_R':
+            cut_carboxylate_bridge(node, cif, graph_cut)
+        elif atom.type == "N":
+            cut_metal_nitrogen_bridge(node, cif, graph_cut)
+    node_scan = graph_cut.keys()
+    # shift all by molecular periodic image
+    node_recalc = []
+    for node in node_scan:
+        if node not in node_recalc:
+            for nnode in iter_neighbours(node, graph_cut):
+                node_recalc.append(nnode)
+                vals = graph_cut[nnode]
+                atom = get_atom(nnode, cif)
+                neighbours = N(nnode, graph_cut)
+                for nodeid in neighbours:
+                    adj_atom = get_atom(nodeid, cif)
+                    diff = adj_atom.scaled_pos - atom.scaled_pos
+                    adj_atom.scaled_pos -= np.round(diff)
+    # now calculate distances.  The inter molecular distances will
+    # be waaay off, but we don't really care about these.
+    atom_pairs = list(itertools.combinations(cif.atoms, 2))
     for pair in atom_pairs:
         dist = pair[0].scaled_pos - pair[1].scaled_pos
-        v_dist = round_max(dist)
-        vect = np.dot(v_dist, newcif.cell.cell)
+        vect = np.dot(dist, cif.cell.cell)
         length = np.linalg.norm(vect)
         graph[pair[0].nodeid]['distance'][pair[1].nodeid] = length
         graph[pair[1].nodeid]['distance'][pair[0].nodeid] = length
+    lines = to_cif(cif.atoms, cif.cell, cif.bonds, "test")
+    for atom in cif.atoms:
+        atom.scaled_pos = np.array(atom.ifpos(inv))
+    cif_name = "test.cif"
+    output_file = open(cif_name, "w")
+    output_file.writelines(lines)
+    output_file.close()
 
 def gen_graph_faps(faps_obj):
     _graph = {}
@@ -606,6 +728,8 @@ def match(clique, g1, g2, H_MATCH):
         node_types = [val['type'] for val in g2.values()
                       if not val['type'].startswith("H")]
     if not (len(clique_types) == len(node_types)):
+        if len(clique_types) == 13:
+            print clique_types, node_types
         return False
     if not sorted(clique_types) == sorted(node_types):
         return False
@@ -796,9 +920,7 @@ def calc_edges(net, cif, gp):
         gr2 = net[n2]['nodes']
         com2 = net[n2]['com']
         # re-calculated COMs
-        common = bonded_node(gr1, gr2) 
-        if common:
-            print net[n1]['label'], net[n2]['label']
+        common = bonded_node(gr1, gr2)
         for i1, i2 in common:
             at1 = get_atom(i1, cif)
             at2 = get_atom(i2, cif)
@@ -813,9 +935,12 @@ def main():
 
     underlying_net = {}
     dummy = "dummy"
+    mofs = CSV(options.csv_file)
+    if not mofs.keys():
+        error("No MOFs to evaluate!")
+        sys.exit()
     bu_graphs = generate_bu_graphs()
     fnl_graphs = generate_fnl_graphs()
-    mofs = CSV(options.csv_file)
     functional_groups = FunctionalGroups(options.sql_file)
     for mof in mofs.keys():
         print mof
@@ -836,6 +961,9 @@ def main():
         local_bu_graphs = gen_local_bus(mof, bu_graphs)
         extract_bu_chunks(mutable_cif_graph, underlying_net,
                            local_bu_graphs, newcif, gp)
+    for node, val in mutable_cif_graph.items():
+        atom = get_atom(node, newcif)
+        print atom.uff_type, atom.scaled_pos
     edge_space = calc_edges(underlying_net, newcif, gp)
     gp.plot()
 
