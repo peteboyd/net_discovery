@@ -27,6 +27,7 @@ from faps import Structure, Cell, Atom, Symmetry
 from function_switch import FunctionalGroupLibrary, FunctionalGroup
 from elements import CCDC_BOND_ORDERS
 import time
+from random import choice
 sys.path.append(options.genstruct_dir)
 from genstruct import Database, BuildingUnit, Atom_gen
 # 1. need to read in database of linkers
@@ -611,15 +612,36 @@ def bk(R, P, X, g):
         P.remove(v)
         X.append(v)
 
+def intersect(a, b):
+    return list(set(a) & set(b))
+
+def modulo(a, b):
+    return [i for i in a if i not in b]
+
+def pivot_choice(list, g):
+    """Find the node with the highest connectivity."""
+    max = [0,0]
+    for node in list:
+        n = N(node, g)
+        if len(n) > max[1]:
+            max = [node, len(n)]
+    return max[0]
+
 def bk_pivot(R, P, X, g):
     """Bron-Kerbosch recursive algorithm"""
     if not any((P,X)):
         yield R
-    for v in P[:]:
+    if intersect(P,X):
+        union = intersect(P, X)
+        u = pivot_choice(union)
+        list = modulo(P[:], N(u, g))
+    else:
+        list = P[:]
+    for v in list:
         R_v = R + [v]
         P_v = [v1 for v1 in P if v1 in N(v, g)] # p intersects N(vertex)
         X_v = [v1 for v1 in X if v1 in N(v, g)] # x intersects N(vertex)
-        for r in bk(R_v, P_v, X_v, g):
+        for r in bk_pivot(R_v, P_v, X_v, g):
             yield r
         P.remove(v)
         X.append(v)
@@ -739,13 +761,19 @@ def extract_clique(g1, g2, H_MATCH=True, tol=0.3):
     kk = {}
     C = gen_correspondence_graph(g1, g2)
     gen_correspondence_neighbours(C, g1, g2, tol=tol)
-    cliques = sorted(list(bk([], C.keys(), [], C)), reverse=True)
+    #cliques = sorted(list(bk([], C.keys(), [], C)), reverse=True)
+    for J in bk_pivot([], C.keys(), [], C):
+        keys = [i[0] for i in J]
+        if match(keys, g1, g2, H_MATCH):
+            return {i: g1.pop(i) for i in keys}
+    return {}
+    #cliques = sorted(list(bk_pivot([], C.keys(), [], C)), reverse=True)
     # remove duplicate entries with just different order.
-    [kk.setdefault(tuple(sorted([j[0] for j in i])), 0) for i in cliques]
-    cliques = [i for i in kk.keys() if match(i, g1, g2, H_MATCH)]
-    if not cliques:
-        return {}
-    return {i:g1.pop(i) for i in max(cliques, key=len)}
+    #[kk.setdefault(tuple(sorted([j[0] for j in i])), 0) for i in cliques]
+    #cliques = [i for i in kk.keys() if match(i, g1, g2, H_MATCH)]
+    #if not cliques:
+    #    return {}
+    #return {i:g1.pop(i) for i in max(cliques, key=len)}
 
 def gen_local_bus(mofname, bu_graphs):
     met, org1, org2, top, fnum = parse_mof_name(mofname)
