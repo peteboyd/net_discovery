@@ -399,42 +399,80 @@ def point_of_intersection(p_edge, edge, p_plane, plane_vec1, plane_vec2):
         return p_edge 
     return pdotn/ldotn*l + p_edge 
 
-def cut_carboxylate_bridge(node, cif, graph_cut):
+def cut_carboxylate_bridge(node, cif, cut_graph):
     """Deletes the C-C bond from a carboxylate bridging
     moiety.
 
     """
-    neighbours = N(node, graph_cut)
-    neighbour_types = [graph_cut[i]['element'] for i in neighbours]
+    neighbours = N(node, cut_graph)
+    neighbour_types = [cut_graph[i]['element'] for i in neighbours]
     if ["C", "O", "O"] == sorted(neighbour_types):
-        o_nodes = [i for i in neighbours if graph_cut[i]['element'] == "O"]
-        extended_neighbours = [graph_cut[i]['element'] for j 
-                               in o_nodes for i in N(j, graph_cut)]
+        o_nodes = [i for i in neighbours if cut_graph[i]['element'] == "O"]
+        extended_neighbours = [cut_graph[i]['element'] for j 
+                               in o_nodes for i in N(j, cut_graph)]
         if not any([i == "H" for i in extended_neighbours]):
-            c_node = [i for i in N(node, graph_cut) if
-                      graph_cut[i]['element'] == "C"]
+            c_node = [i for i in N(node, cut_graph) if
+                      cut_graph[i]['element'] == "C"]
             c_node = c_node[0]
-            c_ind = graph_cut[node]['neighbours'].index(c_node)
-            graph_cut[node]['neighbours'].pop(c_ind)
-            c_ind = graph_cut[c_node]['neighbours'].index(node)
-            graph_cut[c_node]['neighbours'].pop(c_ind)
+            c_ind = cut_graph[node]['neighbours'].index(c_node)
+            cut_graph[node]['neighbours'].pop(c_ind)
+            c_ind = cut_graph[c_node]['neighbours'].index(node)
+            cut_graph[c_node]['neighbours'].pop(c_ind)
     return
 
-def cut_metal_nitrogen_bridge(node, cif, graph_cut):
+def cut_metal_nitrogen_bridge(node, cif, cut_graph):
     metals = ["Cu", "Zn", "In", "Cr", "Zr", "V"]
-    neighbours = N(node, graph_cut)
-    neighbour_types = [graph_cut[i]['element'] for i in neighbours]
+    neighbours = N(node, cut_graph)
+    neighbour_types = [cut_graph[i]['element'] for i in neighbours]
     if any([i == j for i in metals for j in neighbour_types]):
-        m_node = [i for i in N(node, graph_cut) if
-                   graph_cut[i]['element'] in metals]
+        m_node = [i for i in N(node, cut_graph) if
+                   cut_graph[i]['element'] in metals]
         m_node = m_node[0]
-        m_ind = graph_cut[node]['neighbours'].index(m_node)
-        graph_cut[node]['neighbours'].pop(m_ind)
-        n_ind = graph_cut[m_node]['neighbours'].index(node)
-        graph_cut[m_node]['neighbours'].pop(n_ind)
+        m_ind = cut_graph[node]['neighbours'].index(m_node)
+        cut_graph[node]['neighbours'].pop(m_ind)
+        n_ind = cut_graph[m_node]['neighbours'].index(node)
+        cut_graph[m_node]['neighbours'].pop(n_ind)
     return
 
-def gen_cif_distance(cif, graph):
+def cut_phosphonate_bridge(node, cif, cut_graph):
+    #TODO(pboyd): fill in this entry
+    pass
+
+def cut_mof_by_links(cif, graph):
+    """Slices the bonds of MOFs at particular points to properly define
+    molecular distances, and make the correspondence graph much faster
+    to calculate.
+
+    """
+    inv = cif.cell.inverse
+    cut_graph = copy.deepcopy(graph)
+    for atom in cif.atoms:
+        atom.scaled_pos = np.array(atom.ifpos(inv))
+        node = atom.nodeid 
+        if atom.uff_type == 'C_R':
+            cut_carboxylate_bridge(node, cif, cut_graph)
+        elif atom.type == "N":
+            cut_metal_nitrogen_bridge(node, cif, cut_graph)
+        elif atom.type == "P":
+            cut_phosphonate_bridge(node, cif, cut_graph)
+    # shift all by molecular periodic image
+    node_recalc = []
+    # some cheaty stuff here
+    net_cut, slicey_nodes = [], []
+    # end of cheaty stuff
+    for node in cut_graph.keys():
+        slicey_nodes = []
+        if node not in node_recalc:
+            for nnode in iter_neighbours(node, cut_graph):
+                slicey_nodes.append(nnode)
+                node_recalc.append(nnode)
+            net_cut.append(slicey_nodes[:])
+    # graph cut is just the graph where the bonds are sliced
+    # net cut is one level of depth further, where each
+    # index is a 'chunk' of the cif.
+    return (cut_graph, net_cut)
+
+def gen_cif_distance(cif, cut_graph, graph):
     """This computes the distances between molecular atoms.  These
     are established by 'cutting' the cif at intervals defined by a
     particular moiety.  In the initial case only carboxylates are 
@@ -442,24 +480,16 @@ def gen_cif_distance(cif, graph):
 
     """
     inv = cif.cell.inverse
-    graph_cut = copy.deepcopy(graph)
-    for atom in cif.atoms:
-        atom.scaled_pos = np.array(atom.ifpos(inv))
-        node = atom.nodeid 
-        if atom.uff_type == 'C_R':
-            cut_carboxylate_bridge(node, cif, graph_cut)
-        elif atom.type == "N":
-            cut_metal_nitrogen_bridge(node, cif, graph_cut)
-    node_scan = graph_cut.keys()
-    # shift all by molecular periodic image
     node_recalc = []
-    for node in node_scan:
-        if node not in node_recalc:
-            for nnode in iter_neighbours(node, graph_cut):
+    # shift adjacent nodes by the periodic image so that molecules
+    # remain intact.
+    for node in cut_graph.keys():
+        for nnode in iter_neighbours(node, cut_graph):
+            if nnode not in node_recalc:
                 node_recalc.append(nnode)
-                vals = graph_cut[nnode]
+                vals = cut_graph[nnode]
                 atom = get_atom(nnode, cif)
-                neighbours = N(nnode, graph_cut)
+                neighbours = N(nnode, cut_graph)
                 for nodeid in neighbours:
                     adj_atom = get_atom(nodeid, cif)
                     diff = adj_atom.scaled_pos - atom.scaled_pos
@@ -474,12 +504,12 @@ def gen_cif_distance(cif, graph):
         graph[pair[0].nodeid]['distance'][pair[1].nodeid] = length
         graph[pair[1].nodeid]['distance'][pair[0].nodeid] = length
     lines = to_cif(cif.atoms, cif.cell, cif.bonds, "test")
-    for atom in cif.atoms:
-        atom.scaled_pos = np.array(atom.ifpos(inv))
     cif_name = "test.cif"
     output_file = open(cif_name, "w")
     output_file.writelines(lines)
     output_file.close()
+    for atom in cif.atoms:
+        atom.scaled_pos = np.array(atom.ifpos(inv))
 
 def gen_graph_faps(faps_obj):
     _graph = {}
@@ -750,8 +780,6 @@ def match(clique, g1, g2, H_MATCH):
         node_types = [val['type'] for val in g2.values()
                       if not val['type'].startswith("H")]
     if not (len(clique_types) == len(node_types)):
-        if len(clique_types) == 13:
-            print clique_types, node_types
         return False
     if not sorted(clique_types) == sorted(node_types):
         return False
@@ -762,7 +790,7 @@ def extract_clique(g1, g2, H_MATCH=True, tol=0.3):
     C = gen_correspondence_graph(g1, g2)
     gen_correspondence_neighbours(C, g1, g2, tol=tol)
     #cliques = sorted(list(bk([], C.keys(), [], C)), reverse=True)
-    for J in bk_pivot([], C.keys(), [], C):
+    for J in bk([], C.keys(), [], C):
         keys = [i[0] for i in J]
         if match(keys, g1, g2, H_MATCH):
             return {i: g1.pop(i) for i in keys}
@@ -844,47 +872,76 @@ def clean(name):
     return name
 
 def extract_fnl_chunks(mutable_cif_graph, underlying_net,
-                       local_fnl_graphs, cif, gp):
-    fnl_list = reversed(sorted([
+                       local_fnl_graphs, cif, net_chunks, gp):
+    fnl_list = list(reversed(sorted([
                 (count_non_hydrogens(g),i) for i, g in 
-                local_fnl_graphs.items()]))
-    for count, fnl in fnl_list:
-        fnl_graph = local_fnl_graphs[fnl]
-        chunk = extract_clique(mutable_cif_graph, fnl_graph,
-                               H_MATCH=True, tol=0.3)
-        while chunk:
-            com = calc_com(chunk, cif)
-            net_id = uuid4()
-            underlying_net[net_id] = {}    
-            underlying_net[net_id]['nodes'] = chunk
-            underlying_net[net_id]['com'] = com
-            underlying_net[net_id]['label'] = fnl       
-            gp.add_point(com, colour='g', label=fnl)
-            chunk = extract_clique(mutable_cif_graph, 
-                                   fnl_graph, H_MATCH=True, tol=0.3)
+                local_fnl_graphs.items()])))
+
+    for nchunk_ind, nchunk in enumerate(net_chunks[:]):
+        sub_graph = {i:mutable_cif_graph[i] for i in nchunk}
+        for count, fnl in fnl_list:
+            fnl_graph = local_fnl_graphs[fnl]
+            chunk = extract_clique(sub_graph, fnl_graph,
+                                   H_MATCH=True, tol=0.3)
+            while chunk:
+                for i in chunk.keys():
+                    mutable_cif_graph.pop(i)
+                    nind = nchunk.index(i)
+                    net_chunks[nchunk_ind].pop(nind)
+                com = calc_com(chunk, cif)
+                net_id = uuid4()
+                underlying_net[net_id] = {}    
+                underlying_net[net_id]['nodes'] = chunk
+                underlying_net[net_id]['com'] = com
+                underlying_net[net_id]['label'] = fnl
+                underlying_net[net_id]['fnl_label'] = fnl
+                underlying_net[net_id]['bu_label'] = None
+                gp.add_point(com, colour='g', label=fnl)
+                chunk = extract_clique(sub_graph, 
+                            fnl_graph, H_MATCH=True, tol=0.3)
 
 def extract_bu_chunks(mutable_cif_graph, underlying_net,
-                      local_bu_graphs, cif, gp):
-    bu_list = reversed(sorted([
+                      local_bu_graphs, cif, net_chunks, gp):
+    bu_list = list(reversed(sorted([
                (count_non_hydrogens(g), i) for i, g in
-               local_bu_graphs.items()]))
+               local_bu_graphs.items()])))
+
     for count, bu in bu_list:
         print bu
         bu_graph = local_bu_graphs[bu]
         print "number of non-hydrogen atoms = %i"%(count)
-        chunk = extract_clique(mutable_cif_graph, bu_graph, 
+        for nchunk_ind, nchunk in enumerate(net_chunks[:]):
+            # this is ugly
+            sub_graph = {i:mutable_cif_graph[i].copy() for i in nchunk}
+            chunk = {}
+            if sub_graph:
+                chunk = extract_clique(sub_graph, bu_graph, 
                                H_MATCH=False, tol=0.3)
-        while chunk:
-            com = calc_com(chunk, cif)
-            net_id = uuid4()
-            underlying_net[net_id] = {}
-            underlying_net[net_id]['nodes'] = chunk
-            underlying_net[net_id]['com'] = com
-            underlying_net[net_id]['label'] = bu
-            gp.add_point(com, colour='r', label=bu)
-            print "leftover atoms = %i"%(len(mutable_cif_graph.keys()))
-            chunk = extract_clique(mutable_cif_graph, bu_graph, 
-                                   H_MATCH=False, tol=0.3)
+            while chunk:
+                for i in chunk.keys():
+                    mutable_cif_graph.pop(i)
+                    nind = nchunk.index(i)
+                    try:
+                        net_chunks[nchunk_ind].pop(nind)
+                    except IndexError:
+                        #I've derped this somehow
+                        pass
+                com = calc_com(chunk, cif)
+                net_id = uuid4()
+                underlying_net[net_id] = {}
+                underlying_net[net_id]['nodes'] = chunk
+                underlying_net[net_id]['com'] = com
+                underlying_net[net_id]['label'] = bu
+                underlying_net[net_id]['fnl_label'] = None 
+                underlying_net[net_id]['bu_label'] = bu
+                gp.add_point(com, colour='r', label=bu)
+                print "leftover atoms = %i"%(len(mutable_cif_graph.keys()))
+                if sub_graph:
+                    chunk = extract_clique(sub_graph, bu_graph, 
+                                    H_MATCH=False, tol=0.3)
+                else:
+                    net_chunks.pop(nchunk_ind)
+                    chunk = {}
 
 def bonded_node(gr1, gr2):
     bonding_nodes1 = {node1: node2 for node1 in gr1.keys() for node2 in
@@ -959,6 +1016,27 @@ def calc_edges(net, cif, gp):
 
     return edges
 
+def collect_remaining(net, g):
+    """It seems that hydrogens get 'lost' in this algorithm
+    so we'll collect them at the end.
+
+    """
+    while g:
+        for node, values in g.items():
+            neighbours = values['neighbours']
+    
+            for net_node, netvals in net.items():
+                if any([i in netvals['nodes'].keys() for i in neighbours]):
+                    try:
+                        net[net_node]['nodes'][node] = g.pop(node)
+                    except KeyError:
+                        print "node already taken!"
+                    print netvals['label']
+
+def label_atoms():
+    pass
+def organic_repr():
+    pass
 def main():
 
     underlying_net = {}
@@ -976,8 +1054,8 @@ def main():
         newcif.from_file(os.path.join(options.lookup, 
                          mof), "cif", dummy)
         cif_graph = gen_graph_faps(newcif)
-        gen_cif_distance(newcif, cif_graph)
-        
+        cut_graph, net_chunks = cut_mof_by_links(newcif, cif_graph)
+        gen_cif_distance(newcif, cut_graph, cif_graph)
         gp = GraphPlot()
         gp.plot_cell(cell=newcif.cell.cell, colour='g')
         mutable_cif_graph = cif_graph.copy()
@@ -985,10 +1063,12 @@ def main():
         local_fnl_graphs = {i:k for i, k in fnl_graphs.items() if
                             i in local_fnl_grps} 
         extract_fnl_chunks(mutable_cif_graph, underlying_net,
-                           local_fnl_graphs, newcif, gp)
+                           local_fnl_graphs, newcif, net_chunks, gp)
         local_bu_graphs = gen_local_bus(mof, bu_graphs)
         extract_bu_chunks(mutable_cif_graph, underlying_net,
-                           local_bu_graphs, newcif, gp)
+                           local_bu_graphs, newcif, net_chunks, gp)
+
+    collect_remaining(underlying_net, mutable_cif_graph)
     for node, val in mutable_cif_graph.items():
         atom = get_atom(node, newcif)
         print atom.uff_type, atom.scaled_pos
