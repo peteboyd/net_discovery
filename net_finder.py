@@ -871,6 +871,14 @@ def clean(name):
         name = name[:-4]
     return name
 
+def pop_chunks(chunk, net_chunks, ind):
+    popind = []
+    for i in chunk.keys():
+        pind = net_chunks[ind].index(i)
+        popind.append(pind)
+    for j in reversed(sorted(popind)):
+        net_chunks[ind].pop(j)
+
 def extract_fnl_chunks(mutable_cif_graph, underlying_net,
                        local_fnl_graphs, cif, net_chunks, gp):
     fnl_list = list(reversed(sorted([
@@ -884,10 +892,7 @@ def extract_fnl_chunks(mutable_cif_graph, underlying_net,
             chunk = extract_clique(sub_graph, fnl_graph,
                                    H_MATCH=True, tol=0.3)
             while chunk:
-                for i in chunk.keys():
-                    mutable_cif_graph.pop(i)
-                    nind = nchunk.index(i)
-                    net_chunks[nchunk_ind].pop(nind)
+                pop_chunks(chunk, net_chunks, nchunk_ind)
                 com = calc_com(chunk, cif)
                 net_id = uuid4()
                 underlying_net[net_id] = {}    
@@ -913,19 +918,10 @@ def extract_bu_chunks(mutable_cif_graph, underlying_net,
         for nchunk_ind, nchunk in enumerate(net_chunks[:]):
             # this is ugly
             sub_graph = {i:mutable_cif_graph[i].copy() for i in nchunk}
-            chunk = {}
-            if sub_graph:
-                chunk = extract_clique(sub_graph, bu_graph, 
-                               H_MATCH=False, tol=0.3)
+            chunk = extract_clique(sub_graph, bu_graph, 
+                               H_MATCH=False, tol=0.4)
             while chunk:
-                for i in chunk.keys():
-                    mutable_cif_graph.pop(i)
-                    nind = nchunk.index(i)
-                    try:
-                        net_chunks[nchunk_ind].pop(nind)
-                    except IndexError:
-                        #I've derped this somehow
-                        pass
+                pop_chunks(chunk, net_chunks, nchunk_ind)
                 com = calc_com(chunk, cif)
                 net_id = uuid4()
                 underlying_net[net_id] = {}
@@ -936,12 +932,8 @@ def extract_bu_chunks(mutable_cif_graph, underlying_net,
                 underlying_net[net_id]['bu_label'] = bu
                 gp.add_point(com, colour='r', label=bu)
                 print "leftover atoms = %i"%(len(mutable_cif_graph.keys()))
-                if sub_graph:
-                    chunk = extract_clique(sub_graph, bu_graph, 
-                                    H_MATCH=False, tol=0.3)
-                else:
-                    net_chunks.pop(nchunk_ind)
-                    chunk = {}
+                chunk = extract_clique(sub_graph, bu_graph, 
+                                    H_MATCH=False, tol=0.4)
 
 def bonded_node(gr1, gr2):
     bonding_nodes1 = {node1: node2 for node1 in gr1.keys() for node2 in
@@ -1068,12 +1060,12 @@ def main():
         extract_bu_chunks(mutable_cif_graph, underlying_net,
                            local_bu_graphs, newcif, net_chunks, gp)
 
+    edge_space = calc_edges(underlying_net, newcif, gp)
+    gp.plot()
     collect_remaining(underlying_net, mutable_cif_graph)
     for node, val in mutable_cif_graph.items():
         atom = get_atom(node, newcif)
         print atom.uff_type, atom.scaled_pos
-    edge_space = calc_edges(underlying_net, newcif, gp)
-    gp.plot()
 
 if __name__ == "__main__":
     main()
