@@ -750,11 +750,7 @@ def parse_mof_name(mofname):
     return met, org1, org2, top, fnum
 
 def count_non_hydrogens(graph):
-    heavycount = 0
-    for node, keys in graph.items():
-        if not keys['type'].startswith("H"):
-            heavycount += 1
-    return heavycount
+    return len([i for i, val in graph.items() if val['element'] != 'H'])
     
 def powerset(iterable):
     s = list(iterable)
@@ -871,11 +867,12 @@ def clean(name):
         name = name[:-4]
     return name
 
-def pop_chunks(chunk, net_chunks, ind):
+def pop_chunks(cif_graph, chunk, net_chunks, ind):
     popind = []
     for i in chunk.keys():
         pind = net_chunks[ind].index(i)
         popind.append(pind)
+        cif_graph.pop(i)
     for j in reversed(sorted(popind)):
         net_chunks[ind].pop(j)
 
@@ -885,25 +882,28 @@ def extract_fnl_chunks(mutable_cif_graph, underlying_net,
                 (count_non_hydrogens(g),i) for i, g in 
                 local_fnl_graphs.items()])))
 
-    for nchunk_ind, nchunk in enumerate(net_chunks[:]):
+    for nchunk_ind, nchunk in enumerate(net_chunks):
         sub_graph = {i:mutable_cif_graph[i] for i in nchunk}
         for count, fnl in fnl_list:
             fnl_graph = local_fnl_graphs[fnl]
             chunk = extract_clique(sub_graph, fnl_graph,
-                                   H_MATCH=True, tol=0.3)
+                                   H_MATCH=True, tol=0.4)
             while chunk:
-                pop_chunks(chunk, net_chunks, nchunk_ind)
-                com = calc_com(chunk, cif)
-                net_id = uuid4()
-                underlying_net[net_id] = {}    
-                underlying_net[net_id]['nodes'] = chunk
-                underlying_net[net_id]['com'] = com
-                underlying_net[net_id]['label'] = fnl
-                underlying_net[net_id]['fnl_label'] = fnl
-                underlying_net[net_id]['bu_label'] = None
-                gp.add_point(com, colour='g', label=fnl)
+                pop_chunks(mutable_cif_graph, chunk, net_chunks, nchunk_ind)
+                net_id = add_net_node(underlying_net, chunk, cif, label=fnl)
+                gp.add_point(underlying_net[net_id]['com'], colour='g', 
+                             label=fnl)
                 chunk = extract_clique(sub_graph, 
-                            fnl_graph, H_MATCH=True, tol=0.3)
+                            fnl_graph, H_MATCH=True, tol=0.4)
+
+def add_net_node(underlying_net, chunk, cif, label=None):
+    net_id = uuid4()
+    com = calc_com(chunk, cif)
+    underlying_net[net_id] = {}
+    underlying_net[net_id]['nodes'] = chunk.copy()
+    underlying_net[net_id]['com'] = com
+    underlying_net[net_id]['label'] = label
+    return net_id 
 
 def extract_bu_chunks(mutable_cif_graph, underlying_net,
                       local_bu_graphs, cif, net_chunks, gp):
@@ -915,25 +915,26 @@ def extract_bu_chunks(mutable_cif_graph, underlying_net,
         print bu
         bu_graph = local_bu_graphs[bu]
         print "number of non-hydrogen atoms = %i"%(count)
-        for nchunk_ind, nchunk in enumerate(net_chunks[:]):
+        for nchunk_ind, nchunk in enumerate(net_chunks):
             # this is ugly
             sub_graph = {i:mutable_cif_graph[i].copy() for i in nchunk}
-            chunk = extract_clique(sub_graph, bu_graph, 
-                               H_MATCH=False, tol=0.4)
-            while chunk:
-                pop_chunks(chunk, net_chunks, nchunk_ind)
-                com = calc_com(chunk, cif)
-                net_id = uuid4()
-                underlying_net[net_id] = {}
-                underlying_net[net_id]['nodes'] = chunk
-                underlying_net[net_id]['com'] = com
-                underlying_net[net_id]['label'] = bu
-                underlying_net[net_id]['fnl_label'] = None 
-                underlying_net[net_id]['bu_label'] = bu
-                gp.add_point(com, colour='r', label=bu)
-                print "leftover atoms = %i"%(len(mutable_cif_graph.keys()))
+            if count > 19:
+                c = count_non_hydrogens(sub_graph)
+                if c == count:
+                    pop_chunks(mutable_cif_graph, sub_graph, net_chunks, nchunk_ind)
+                    net_id = add_net_node(underlying_net, sub_graph, cif, label=bu)
+                    gp.add_point(underlying_net[net_id]['com'], colour='r', 
+                                               label=bu)
+            else:
                 chunk = extract_clique(sub_graph, bu_graph, 
-                                    H_MATCH=False, tol=0.4)
+                               H_MATCH=False, tol=0.5)
+                while chunk:
+                    pop_chunks(mutable_cif_graph, chunk, net_chunks, nchunk_ind)
+                    net_id = add_net_node(underlying_net, chunk, cif, label=bu)
+                    gp.add_point(underlying_net[net_id]['com'], colour='r', label=bu)
+                    print "leftover atoms = %i"%(len(mutable_cif_graph.keys()))
+                    chunk = extract_clique(sub_graph, bu_graph, 
+                                    H_MATCH=False, tol=0.5)
 
 def bonded_node(gr1, gr2):
     bonding_nodes1 = {node1: node2 for node1 in gr1.keys() for node2 in
@@ -1053,7 +1054,7 @@ def main():
         mutable_cif_graph = cif_graph.copy()
         local_fnl_grps = [i for i in functional_groups[mof].keys() if i]
         local_fnl_graphs = {i:k for i, k in fnl_graphs.items() if
-                            i in local_fnl_grps} 
+                            i in local_fnl_grps}
         extract_fnl_chunks(mutable_cif_graph, underlying_net,
                            local_fnl_graphs, newcif, net_chunks, gp)
         local_bu_graphs = gen_local_bus(mof, bu_graphs)
@@ -1061,11 +1062,13 @@ def main():
                            local_bu_graphs, newcif, net_chunks, gp)
 
     edge_space = calc_edges(underlying_net, newcif, gp)
-    gp.plot()
-    collect_remaining(underlying_net, mutable_cif_graph)
+    # TODO(pboyd) issue warning if some of the remaining atoms are 
+    # non-hydrogen
     for node, val in mutable_cif_graph.items():
         atom = get_atom(node, newcif)
         print atom.uff_type, atom.scaled_pos
+    collect_remaining(underlying_net, mutable_cif_graph)
+    gp.plot()
 
 if __name__ == "__main__":
     main()
