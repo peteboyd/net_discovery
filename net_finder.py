@@ -31,6 +31,7 @@ import time
 from random import choice
 sys.path.append(options.genstruct_dir)
 from genstruct import Database, BuildingUnit, Atom_gen
+from mpi4py import MPI
 # 1. need to read in database of linkers
 # 2. need to read in database of functional groups
 # 3. need to read in sql file
@@ -271,6 +272,7 @@ class GraphPlot(object):
         #for ind, mag in enumerate(point):
         #    if abs(mag) > abs(max[1]):
         #        max = [ind, mag]
+        # determine how many planes intersect the two points.
         if periodics:
             # temp fix
             max = periodics[0]
@@ -311,13 +313,14 @@ class GraphPlot(object):
         plt.show()
         sys.exit()
 
-def to_cif(atoms, cell, bonds, name):
+def to_cif(atoms, cell, bonds, name, _DEBUG=False):
     """Return a CIF file with bonding and atom types."""
 
     inv_cell = cell.inverse
 
     type_count = {}
-
+    bu_order = []
+    bu_indices = {}
     atom_part = []
     for idx, atom in enumerate(atoms):
         if atom is None:
@@ -332,10 +335,34 @@ def to_cif(atoms, cell, bonds, name):
         else:
             type_count[atom.element] = 1
         atom.site = "%s%i" % (atom.element, type_count[atom.element])
-        atom_part.append("%-5s %-5s %-5s " % (atom.site, atom.element, uff_type))
-        atom_part.append("%f %f %f " % tuple(atom.scaled_pos))
-        atom_part.append("%f\n" % atom.charge)
+        if _DEBUG:
+            coord = atom.scaled_pos
+            atmdescription = (atom.site, atom.element, uff_type, "?", "?")
+        else:
+            bu_type = "%i_%s"%(atom.molorder, atom.bu)
+            if bu_type in bu_order:
+                buind = bu_order.index(bu_type)
+            else:
+                buind = len(bu_order)
+                bu_order.append(bu_type)
+                bu_indices[buind] = atom.bu
+            if hasattr(atom, 'fnlorder'):
+                fnl_type = "%i_%s"%(atom.fnlorder, atom.fnl)
+                if fnl_type in bu_order:
+                    fnlind = bu_order.index(fnl_type)
+                else:
+                    fnlind = len(bu_order)
+                    bu_order.append(fnl_type)
+                    bu_indices[fnlind] = atom.fnl
+            else:
+                fnlind = '?'
 
+            coord = atom.ifpos(inv_cell)
+            atmdescription = (atom.site, atom.element, uff_type, 
+                              buind, fnlind)
+        atom_part.append("%-5s %-5s %-5s %-5s %-5s" % atmdescription)
+        atom_part.append("%f %f %f " % tuple(coord))
+        atom_part.append("%f\n" % atom.charge)
     bond_part = []
     for bond, order in bonds.items():
         try:
@@ -359,17 +386,31 @@ def to_cif(atoms, cell, bonds, name):
         "%-33s %-.10s\n" % ("_cell_angle_alpha", cell.alpha),
         "%-33s %-.10s\n" % ("_cell_angle_beta", cell.beta),
         "%-33s %-.10s\n" % ("_cell_angle_gamma", cell.gamma),
-        "%-33s %s\n" % ("_cell_volume", cell.volume),
-        # start of atom loops
+        "%-33s %s\n" % ("_cell_volume", cell.volume)]
+    if not _DEBUG:
+        bu_part = []
+        for i in range(len(bu_indices.keys())):
+            name = bu_indices[i]
+            bu_part.append("%-5i %-12s\n"%(i, name))
+        cif_file += [
+                "\nloop_\n",
+                "_chemical_identifier\n",
+                "_chemical_name\n"] + bu_part
+    # start of atom loops
+    cif_file += [
         "\nloop_\n",
         "_atom_site_label\n",
         "_atom_site_type_symbol\n",
         "_atom_site_description\n",
+        "_atom_site_building_unit\n",
+        "_atom_site_functional_group\n",
         "_atom_site_fract_x\n",
         "_atom_site_fract_y\n",
         "_atom_site_fract_z\n",
-        "_atom_type_partial_charge\n"] + atom_part + [
-        # bonding loop
+        "_atom_type_partial_charge\n"] + atom_part 
+
+    # bonding loop
+    cif_file += [
         "\nloop_\n",
         "_geom_bond_atom_site_label_1\n",
         "_geom_bond_atom_site_label_2\n",
@@ -509,11 +550,12 @@ def gen_cif_distance(cif, cut_graph, graph):
         length = np.linalg.norm(vect)
         graph[pair[0].nodeid]['distance'][pair[1].nodeid] = length
         graph[pair[1].nodeid]['distance'][pair[0].nodeid] = length
-    lines = to_cif(cif.atoms, cif.cell, cif.bonds, "test")
-    cif_name = "test.cif"
-    output_file = open(cif_name, "w")
-    output_file.writelines(lines)
-    output_file.close()
+
+    lines = to_cif(cif.atoms, cif.cell, cif.bonds, "test", _DEBUG=True)
+    #cif_name = "test.cif"
+    #output_file = open(cif_name, "w")
+    #output_file.writelines(lines)
+    #output_file.close()
 
 def gen_graph_faps(faps_obj):
     _graph = {}
@@ -579,7 +621,7 @@ def calc_com(chunk, obj):
                               if i.nodeid in chunk.keys() and
                               not i.uff_type.startswith("H")])
         # note COM might not be in the unit cell, this must
-        # be shifted, along with the nodes themselves. 
+        # be shifted, along with the nodes themselves.
         com = np.sum(positions, axis=0) / float(len(positions))
         com_shift = np.floor(com)
 
@@ -810,6 +852,10 @@ def extract_clique(g1, g2, H_MATCH=True, tol=0.3):
 def gen_local_bus(mofname, bu_graphs):
     met, org1, org2, top, fnum = parse_mof_name(mofname)
     local_bus = []
+    # found an error where the sra topology had two index 2's
+    # o15 was also index 2... duh.
+    if (met == 'm9') and (org1 == 'o2' or org2 == 'o2'):
+        local_bus += ['o15']
     if (met == 'm2' or met == 'm3') and (top == 'pcu'):
         local_bus += [i for i in bu_graphs.keys() if org1 + "s" in i]
         local_bus += [i for i in bu_graphs.keys() if org2 + "s" in i]
@@ -844,8 +890,9 @@ def generate_fnl_graphs():
     fnl_graphs = {}
     fnl_lib = FunctionalGroupLibrary()
     for name, obj in fnl_lib.items():
-        fnl_graphs[name], junk = gen_graph_faps(obj)
-        gen_distances(fnl_graphs[name], obj)
+        if name != "H":
+            fnl_graphs[name], junk = gen_graph_faps(obj)
+            gen_distances(fnl_graphs[name], obj)
     return fnl_graphs
 
 def clean(name):
@@ -885,7 +932,7 @@ def pop_chunks(cif_graph, chunk, net_chunks, ind):
         net_chunks[ind].pop(j)
 
 def extract_fnl_chunks(mutable_cif_graph, underlying_net,
-                       local_fnl_graphs, cif, net_chunks):
+                       local_fnl_graphs, cif, net_chunks, tol):
     fnl_list = list(reversed(sorted([
                 (count_non_hydrogens(g),i) for i, g in 
                 local_fnl_graphs.items()])))
@@ -895,39 +942,37 @@ def extract_fnl_chunks(mutable_cif_graph, underlying_net,
         for count, fnl in fnl_list:
             fnl_graph = local_fnl_graphs[fnl]
             chunk = extract_clique(sub_graph, fnl_graph,
-                                   H_MATCH=True, tol=0.4)
+                                   H_MATCH=True, tol=tol)
             while chunk:
                 pop_chunks(mutable_cif_graph, chunk, net_chunks, nchunk_ind)
                 net_id = add_net_node(underlying_net, chunk, cif, 
                                       _FNL=True, label=fnl)
                 chunk = extract_clique(sub_graph, 
-                            fnl_graph, H_MATCH=True, tol=0.4)
+                            fnl_graph, H_MATCH=True, tol=tol)
 
 def add_net_node(underlying_net, chunk, cif, 
                  _METAL=False, _ORGANIC=False, _FNL=False,
                  label=None):
     net_id = str(uuid4())
     com = calc_com(chunk, cif)
-    underlying_net[net_id] = {}
-    underlying_net[net_id]['nodes'] = chunk.copy()
-    underlying_net[net_id]['com'] = com
-    underlying_net[net_id]['label'] = label
-    underlying_net[net_id]['organic'] = _ORGANIC
-    underlying_net[net_id]['fgroup'] = _FNL
-    underlying_net[net_id]['metal'] = _METAL
+    underlying_net['nodes'][net_id] = {}
+    underlying_net['nodes'][net_id]['atoms'] = chunk.copy()
+    underlying_net['nodes'][net_id]['com'] = com
+    underlying_net['nodes'][net_id]['label'] = label
+    underlying_net['nodes'][net_id]['organic'] = _ORGANIC
+    underlying_net['nodes'][net_id]['fgroup'] = _FNL
+    underlying_net['nodes'][net_id]['metal'] = _METAL
     return net_id 
 
 def extract_bu_chunks(mutable_cif_graph, underlying_net,
-                      local_bu_graphs, cif, net_chunks):
+                      local_bu_graphs, cif, net_chunks, tol):
     bu_list = list(reversed(sorted([
                (count_non_hydrogens(g), i) for i, g in
                local_bu_graphs.items()])))
 
     for count, bu in bu_list:
-        print bu
         bu_graph = local_bu_graphs[bu]
         _METAL, _ORGANIC = (bu.startswith('m'), bu.startswith('o'))
-        print "number of non-hydrogen atoms = %i"%(count)
         for nchunk_ind, nchunk in enumerate(net_chunks):
             # this is ugly
             sub_graph = {i:mutable_cif_graph[i].copy() for i in nchunk}
@@ -949,7 +994,7 @@ def extract_bu_chunks(mutable_cif_graph, underlying_net,
                                           _ORGANIC=_ORGANIC, label=bu)
             else:
                 chunk = extract_clique(sub_graph, bu_graph, 
-                               H_MATCH=False, tol=0.5)
+                               H_MATCH=False, tol=tol)
                 while chunk:
                     pop_chunks(mutable_cif_graph, chunk, 
                                net_chunks, nchunk_ind)
@@ -957,7 +1002,7 @@ def extract_bu_chunks(mutable_cif_graph, underlying_net,
                                           cif, _METAL=_METAL,
                                           _ORGANIC=_ORGANIC, label=bu)
                     chunk = extract_clique(sub_graph, bu_graph, 
-                                    H_MATCH=False, tol=0.5)
+                                    H_MATCH=False, tol=tol)
 
 def bonded_node(gr1, gr2):
     bonding_nodes1 = {node1: node2 for node1 in gr1.keys() for node2 in
@@ -1015,14 +1060,14 @@ def calc_edges(net, cif):
 
     """
     edges = []
-    k = [i for i in net.keys() if i != 'cell' and i != 'edges']
+    k = [i for i in net['nodes'].keys()]
     net_pairs = list(itertools.combinations(k, 2))
     for n1, n2 in net_pairs:
         # get the atomistic nodes
-        gr1 = net[n1]['nodes']
-        com1 = net[n1]['com']
-        gr2 = net[n2]['nodes']
-        com2 = net[n2]['com']
+        gr1 = net['nodes'][n1]['atoms']
+        com1 = net['nodes'][n1]['com']
+        gr2 = net['nodes'][n2]['atoms']
+        com2 = net['nodes'][n2]['com']
         # re-calculated COMs
         common = bonded_node(gr1, gr2)
         for i1, i2 in common:
@@ -1039,19 +1084,22 @@ def collect_remaining(net, g):
     so we'll collect them at the end.
 
     """
-    netkeys = [i for i in net.keys() if i != 'cell' and i != 'edges']
+    netkeys = [i for i in net['nodes'].keys()] 
     while g:
         
         for node, values in g.items():
+            if values['element'] != 'H':
+                warning("%s was not found associated with any "%values['element'] + 
+                        "building unit or functional group!")
             neighbours = values['neighbours']
 
             for net_node in netkeys:
-                netvals = net[net_node]
-                if any([i in netvals['nodes'].keys() for i in neighbours]):
+                netvals = net['nodes'][net_node]
+                if any([i in netvals['atoms'].keys() for i in neighbours]):
                     try:
-                        net[net_node]['nodes'][node] = g.pop(node)
+                        net['nodes'][net_node]['atoms'][node] = g.pop(node)
                     except KeyError:
-                        print "node already taken!"
+                        warning("bonded atom already taken!")
 
 def obtain_coordinating_nodes(node, jnode, net):
     """searches for common coordinating types, carboxylate,
@@ -1059,7 +1107,7 @@ def obtain_coordinating_nodes(node, jnode, net):
 
     """
     return_graph = {}
-    graph = net[jnode]['nodes'].copy()
+    graph = net['nodes'][jnode]['atoms'].copy()
     return_graph.update({node:graph[node]})
     neighbours = [i for i in N(node, graph) if i in graph.keys()]
     neighbour_types = [graph[i]['element'] for i in neighbours]
@@ -1097,7 +1145,7 @@ def obtain_coordinating_nodes(node, jnode, net):
 def get_metal_cluster(node, edges, cif, net):
     metal_graph = {}
     lcif = copy.deepcopy(cif)
-    metal_graph.update(net[node]['nodes'].copy())
+    metal_graph.update(net['nodes'][node]['atoms'].copy())
     # remove nodes not bonded to the metal unit 
     for pnode, vals in metal_graph.items():
         n = vals['neighbours']
@@ -1129,13 +1177,13 @@ def get_metal_cluster(node, edges, cif, net):
 def get_organic_cluster(node, edges, cif, net):
     organic_graph = {}
     lcif = copy.deepcopy(cif)
-    local_graph = net[node]['nodes']
+    local_graph = net['nodes'][node]['atoms']
     organic_graph.update(local_graph.copy())
     node_edges = [i for i in edges if node in i[0:2]]
     joining_nodes = [k for i in node_edges for k in i[0:2] if k != node]
     for jnode in joining_nodes:
-        jgraph = net[jnode]['nodes']
-        if net[jnode]['metal']:
+        jgraph = net['nodes'][jnode]['atoms']
+        if net['nodes'][jnode]['metal']:
             # get the joining atom/s
             joining_atoms = [i for i in jgraph.keys() for k in 
                              local_graph.values() if i in k['neighbours']]
@@ -1144,7 +1192,7 @@ def get_organic_cluster(node, edges, cif, net):
                 organic_graph.update(obtain_coordinating_nodes(join, 
                                      jnode, net))
         else:
-            organic_graph.update(net[jnode]['nodes'].copy())
+            organic_graph.update(net['nodes'][jnode]['atoms'].copy())
     # remove nodes not bonded to the organic unit 
     for pnode, vals in organic_graph.items():
         n = vals['neighbours']
@@ -1172,42 +1220,60 @@ def get_organic_cluster(node, edges, cif, net):
         organic_graph[fnode]['pos'] = np.dot(atom.scaled_pos, cif.cell.cell)
     return organic_graph
 
-def add_labels(net, edge_space):
+def add_labels(net, edge_space, cif):
     """Add the building unit label to the attached functional
     groups.
 
     """
-    net_n = [i for i in net.keys() if i != 'cell' and i != 'edges'] 
+    count_dic = {}
+    net_n = [i for i in net['nodes'].keys()] 
     for netnode in net_n:
-        vals = net[netnode]
-        nodes = vals['nodes']
+        vals = net['nodes'][netnode]
+        atoms = vals['atoms']
         label = vals['label']
+        count_dic.setdefault(label, 0)
+        count_dic[label] += 1
+        vals['order'] = count_dic[label]
         if vals['metal'] or vals['organic']:
-            for node in nodes.keys():
-                nodes[node]['building unit'] = label
+            for natom in atoms.keys():
+                atoms[natom]['building unit'] = label
+                atom = get_atom(natom, cif)
+                atom.bu = label
+                atom.molorder = count_dic[label]
+                atom.fnl = '?'
             if vals['organic']:
-                net[netnode]['functionalization'] = {}
-        
+                net['nodes'][netnode]['functionalization'] = {}
+        elif vals['fgroup']:
+            for natom in atoms.keys():
+                atom = get_atom(natom, cif)
+                atom.fnlorder = count_dic[label]
+                atom.fnl = label
     for node1, node2, vector in edge_space:
-        if net[node1]['organic'] and net[node2]['fgroup']:
-            nodes = net[node2]['nodes']
-            flabel = net[node2]['label']
-            olabel = net[node1]['label']
-            for node in nodes.keys():
-                nodes[node]['building unit'] = olabel
-                nodes[node]['functional group'] = flabel
-            net[node1]['functionalization'].setdefault(flabel, 0)
-            net[node1]['functionalization'][flabel] += 1
+        if net['nodes'][node1]['organic'] and net['nodes'][node2]['fgroup']:
+            atoms = net['nodes'][node2]['atoms']
+            flabel = net['nodes'][node2]['label']
+            olabel = net['nodes'][node1]['label']
+            for natom in atoms.keys():
+                atom = get_atom(natom, cif)
+                atom.bu = olabel
+                atom.molorder = net['nodes'][node1]['order'] 
+                atoms[natom]['building unit'] = olabel
+                atoms[natom]['functional group'] = flabel
+            net['nodes'][node1]['functionalization'].setdefault(flabel, 0)
+            net['nodes'][node1]['functionalization'][flabel] += 1
 
-        elif net[node1]['fgroup'] and net[node2]['organic']:
-            nodes = net[node1]['nodes']
-            flabel = net[node1]['label']
-            olabel = net[node2]['label']
-            for node in nodes.keys():
-                nodes[node]['building unit'] = olabel
-                nodes[node]['functional group'] = flabel
-            net[node2]['functionalization'].setdefault(flabel, 0)
-            net[node2]['functionalization'][flabel] += 1
+        elif net['nodes'][node1]['fgroup'] and net['nodes'][node2]['organic']:
+            atoms = net['nodes'][node1]['atoms']
+            flabel = net['nodes'][node1]['label']
+            olabel = net['nodes'][node2]['label']
+            for natom in atoms.keys():
+                atom = get_atom(natom, cif)
+                atom.bu = olabel
+                atom.molorder = net['nodes'][node2]['order'] 
+                atoms[natom]['building unit'] = olabel
+                atoms[natom]['functional group'] = flabel
+            net['nodes'][node2]['functionalization'].setdefault(flabel, 0)
+            net['nodes'][node2]['functionalization'][flabel] += 1
 
 def get_smiles(string):
     conv = pybel.ob.OBConversion()
@@ -1252,9 +1318,9 @@ def mol_string(graph, bond):
 def plot_net(net):
     gp = GraphPlot()
     gp.plot_cell(cell=net['cell'], colour='g')
-    nn = [i for i in net.keys() if i != 'cell' and i != 'edges']
+    nn = [i for i in net['nodes'].keys()]
     for node in nn:
-        val = net[node]
+        val = net['nodes'][node]
         if val['fgroup']:
             colour = 'b'
         elif val['organic']:
@@ -1265,55 +1331,83 @@ def plot_net(net):
 
     edge_space = net['edges']
     for edge in edge_space:
-        com = net[edge[0]]['com']
+        com = net['nodes'][edge[0]]['com']
         gp.add_edge(edge[2], origin=com)
     gp.plot()
 
+def mpi_chunks(seq, size):
+    splitsize = 1.0/size*len(seq)
+    for i in range(size):
+        yield seq[int(round(i*splitsize)):int(round((i+1)*splitsize))]
+
+def percent_complete(number, length):
+    return float(number+1)/float(length) * 100.
+
+def reduce_size(net):
+    """Pop's out the distance key from the atoms"""
+    for node, val in net['nodes'].items():
+        #net['nodes'][node].pop('atoms')
+        for atom in val['atoms'].keys():
+            val['atoms'][atom].pop('distance')
+
 def main():
+    pybel.ob.obErrorLog.StopLogging()
     nets = {}
     inchikey_dic = {}
     inchi_dic = {}
     smiles_dic = {}
 
     dummy = "dummy"
+    # parallelize this stuff
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
     mofs = CSV(options.csv_file)
-    if not mofs.keys():
+    if rank == 0:
+        data = list(mpi_chunks(mofs.keys(), size))
+    else:
+        data = None
+    data = comm.scatter(data, root=0)
+    if not data:
         error("No MOFs to evaluate!")
+        comm.Disconnect()
         sys.exit()
     bu_graphs = generate_bu_graphs()
     fnl_graphs = generate_fnl_graphs()
     functional_groups = FunctionalGroups(options.sql_file)
-    for mof in mofs.keys():
-        underlying_net = {}
-        print mof
-        newcif = Structure(mof)
-        newcif.from_file(os.path.join(options.lookup, 
+    for count, mof in enumerate(data):
+        underlying_net = {'nodes':{}}
+        info("rank %i, analyzing %s"%(rank, mof))
+        cif = Structure(mof)
+        cif.from_file(os.path.join(options.lookup, 
                          mof), "cif", dummy)
-        underlying_net['cell'] = newcif.cell.cell
-        cif_graph, cif_bonds = gen_graph_faps(newcif)
-        cut_graph, net_chunks = cut_mof_by_links(newcif, cif_graph)
-        gen_cif_distance(newcif, cut_graph, cif_graph)
+        underlying_net['cell'] = cif.cell.cell.copy()
+        cif_graph, cif_bonds = gen_graph_faps(cif)
+        cut_graph, net_chunks = cut_mof_by_links(cif, cif_graph)
+        gen_cif_distance(cif, cut_graph, cif_graph)
         mutable_cif_graph = cif_graph.copy()
-        local_fnl_grps = [i for i in functional_groups[mof].keys() if i]
+        local_fnl_grps = [i for i in functional_groups[mof].keys() if i 
+                          and i != "H"]
         local_fnl_graphs = {i:k for i, k in fnl_graphs.items() if
                             i in local_fnl_grps}
         extract_fnl_chunks(mutable_cif_graph, underlying_net,
-                           local_fnl_graphs, newcif, net_chunks)
+                           local_fnl_graphs, cif, net_chunks,
+                           options.tolerance)
         local_bu_graphs = gen_local_bus(mof, bu_graphs)
         extract_bu_chunks(mutable_cif_graph, underlying_net,
-                           local_bu_graphs, newcif, net_chunks)
+                           local_bu_graphs, cif, net_chunks, 
+                           options.tolerance)
 
-        edge_space = calc_edges(underlying_net, newcif)
+        edge_space = calc_edges(underlying_net, cif)
         # TODO(pboyd) issue warning if some of the remaining atoms are 
         # non-hydrogen
         underlying_net['edges'] = edge_space
         collect_remaining(underlying_net, mutable_cif_graph)
-        add_labels(underlying_net, edge_space)
-        for node in [i for i in underlying_net.keys() if i != 'cell' and 
-                      i != 'edges']:
-            if underlying_net[node]['organic']:
+        add_labels(underlying_net, edge_space, cif)
+        for node in [i for i in underlying_net['nodes'].keys()]:
+            if underlying_net['nodes'][node]['organic']:
                 cluster = get_organic_cluster(node, edge_space, 
-                                              newcif, underlying_net)
+                                              cif, underlying_net)
                 local_bonds = {i:cif_bonds[i] for i in cif_bonds.keys() if 
                                all([j in cluster.keys() for j in i])}
                 #for bond_pair in cif_bonds.keys():
@@ -1324,32 +1418,48 @@ def main():
                 smiles = get_smiles(mol).strip()
                 inchi = get_inchi(mol).strip()
                 inchikey = get_inchikey(mol).strip()
-                underlying_net[node]['smiles'] = smiles
-                underlying_net[node]['inchi'] = inchi
-                underlying_net[node]['inchikey'] = inchikey
-                underlying_net[node]['mol'] = mol
+                underlying_net['nodes'][node]['smiles'] = smiles
+                underlying_net['nodes'][node]['inchi'] = inchi
+                underlying_net['nodes'][node]['inchikey'] = inchikey
+                #underlying_net['nodes'][node]['mol'] = mol
                 inchikey_dic.setdefault(inchikey, []).append((node, mof))
                 inchi_dic.setdefault(inchi, []).append((node, mof))
                 smiles_dic.setdefault(smiles, []).append((node, mof))
-            elif underlying_net[node]['metal']:
+            elif underlying_net['nodes'][node]['metal']:
                 cluster = get_metal_cluster(node, edge_space,
-                                            newcif, underlying_net)
+                                            cif, underlying_net)
                 local_bonds = {i:cif_bonds[i] for i in cif_bonds.keys() if
                                all([j in cluster.keys() for j in i])}
                 mol = mol_string(cluster, local_bonds)
                 smiles = get_smiles(mol).strip()
                 inchi = get_inchi(mol).strip()
                 inchikey = get_inchikey(mol).strip()
-                underlying_net[node]['smiles'] = smiles
-                underlying_net[node]['inchi'] = inchi
-                underlying_net[node]['inchikey'] = inchikey
-                underlying_net[node]['mol'] = mol
+                underlying_net['nodes'][node]['smiles'] = smiles
+                underlying_net['nodes'][node]['inchi'] = inchi
+                underlying_net['nodes'][node]['inchikey'] = inchikey
+                #underlying_net['nodes'][node]['mol'] = mol
                 inchikey_dic.setdefault(inchikey, []).append((node, mof))
                 inchi_dic.setdefault(inchi, []).append((node, mof))
                 smiles_dic.setdefault(smiles, []).append((node, mof))
 
+        lines = to_cif(cif.atoms, cif.cell, cif.bonds, mof + ".lab")
+        cif_name = mof + ".lab.cif" 
+        output_file = open(cif_name, "w")
+        output_file.writelines(lines)
+        output_file.close()
+        reduce_size(underlying_net)
         nets[mof] = underlying_net
-        plot_net(underlying_net)
-
+        if (count % options.report_frequency == 0 or count == (len(data)-1)): 
+            p = percent_complete(count, len(data))
+            info("rank %i is %5.3f %% complete"%(rank, p))
+            
+    node_list =  comm.gather(nets, root=0)
+    if rank == 0:
+        for i in node_list:
+            nets.update(i)
+        pickle_file = open("net.pkl", "wb")
+        pickle.dump(nets, pickle_file)
+        pickle_file.close()
+    #plot_net(underlying_net)
 if __name__ == "__main__":
     main()

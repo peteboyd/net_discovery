@@ -167,13 +167,13 @@ class Options(object):
         elif key == 'max_gridpoints' or key == 'total_mofs' or \
                 key == 'functional_max' or key == 'organic_max' or \
                 key == 'metal_max' or key == 'topology_max' or \
-                key == 'bin_interval':
+                key == 'bin_interval' or key == 'report_frequency':
             try: 
                 val = self.job.getint(section, key)
             except ValueError:
                 val = 0
         # known floats
-        elif key == 'uptake_cutoff':
+        elif key == 'uptake_cutoff' or key == 'tolerance':
             try:
                 val = self.job.getfloat(section, key)
             except ValueError:
