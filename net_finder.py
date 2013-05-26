@@ -551,7 +551,7 @@ def gen_cif_distance(cif, cut_graph, graph):
         graph[pair[0].nodeid]['distance'][pair[1].nodeid] = length
         graph[pair[1].nodeid]['distance'][pair[0].nodeid] = length
 
-    lines = to_cif(cif.atoms, cif.cell, cif.bonds, "test", _DEBUG=True)
+    #lines = to_cif(cif.atoms, cif.cell, cif.bonds, "test", _DEBUG=True)
     #cif_name = "test.cif"
     #output_file = open(cif_name, "w")
     #output_file.writelines(lines)
