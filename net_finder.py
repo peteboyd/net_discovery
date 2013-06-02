@@ -1436,7 +1436,7 @@ def main():
     inchikey_dic = {}
     inchi_dic = {}
     smiles_dic = {}
-
+    basename = options.csv_file[:-4]
     dummy = "dummy"
     # parallelize this stuff
     mofs = CSV(options.csv_file)
@@ -1464,6 +1464,7 @@ def main():
         done = False
         iter_count = 0
         tol = options.tolerance
+        store = True
         while not done:
             iter_count += 1
             cif_graph, cif_bonds = gen_graph_faps(cif)
@@ -1492,67 +1493,70 @@ def main():
                 done = True
             if iter_count >= 15:
                 error("Problem finding cliques for %s"%mof)
-                sys.exit()
-
-        add_labels(underlying_net, edge_space, cif)
-        for node in [i for i in underlying_net['nodes'].keys()]:
-            if underlying_net['nodes'][node]['organic']:
-                cluster = get_organic_cluster(node, edge_space, 
+                #skip to the next MOF
+                store = False
+                done = True
+                #sys.exit()
+        if store:
+            add_labels(underlying_net, edge_space, cif)
+            for node in [i for i in underlying_net['nodes'].keys()]:
+                if underlying_net['nodes'][node]['organic']:
+                    cluster = get_organic_cluster(node, edge_space, 
                                               cif, underlying_net)
-                local_bonds = {i:cif_bonds[i] for i in cif_bonds.keys() if 
-                               all([j in cluster.keys() for j in i])}
-                mol = mol_string(cluster, local_bonds)
-                #molfile = open(underlying_net['nodes'][node]['label']+".mol","w")
-                #molfile.writelines(mol)
-                #molfile.close()
-                smiles = get_smiles(mol).strip()
-                inchi = get_inchi(mol).strip()
-                inchikey = get_inchikey(mol).strip()
-                underlying_net['nodes'][node]['smiles'] = smiles
-                underlying_net['nodes'][node]['inchi'] = inchi
-                underlying_net['nodes'][node]['inchikey'] = inchikey
-                #underlying_net['nodes'][node]['mol'] = mol
-                inchikey_dic.setdefault(inchikey, []).append((node, mof))
-                inchi_dic.setdefault(inchi, []).append((node, mof))
-                smiles_dic.setdefault(smiles, []).append((node, mof))
-            elif underlying_net['nodes'][node]['metal']:
-                cluster = get_metal_cluster(node, edge_space,
-                                            cif, underlying_net)
-                local_bonds = {i:cif_bonds[i] for i in cif_bonds.keys() if
-                               all([j in cluster.keys() for j in i])}
-                mol = mol_string(cluster, local_bonds)
-                #molfile = open(underlying_net['nodes'][node]['label']+".mol","w")
-                #molfile.writelines(mol)
-                #molfile.close()
-                smiles = get_smiles(mol).strip()
-                inchi = get_inchi(mol).strip()
-                inchikey = get_inchikey(mol).strip()
-                underlying_net['nodes'][node]['smiles'] = smiles
-                underlying_net['nodes'][node]['inchi'] = inchi
-                underlying_net['nodes'][node]['inchikey'] = inchikey
-                #underlying_net['nodes'][node]['mol'] = mol
-                inchikey_dic.setdefault(inchikey, []).append((node, mof))
-                inchi_dic.setdefault(inchi, []).append((node, mof))
-                smiles_dic.setdefault(smiles, []).append((node, mof))
-
-        lines = to_cif(cif.atoms, cif.cell, cif.bonds, mof + ".lab")
-        cif_name = mof + ".lab.cif" 
-        output_file = open(cif_name, "w")
-        output_file.writelines(lines)
-        output_file.close()
-        reduce_size(underlying_net)
-        #pickle_file = open('%s.pkl'%mof, 'wb')
-        #pickle.dump(underlying_net, pickle_file)
-        #pickle_file.close()
-        nets[mof] = underlying_net
-        connect, edge, c_info, e_info = \
-                gen_connect_edge_matrix(underlying_net, edge_space)
-
-        mnets[mof] = {'cell':underlying_net['cell'],
-                      'connectivity_matrix':connect,
-                      'edge_matrix':edge,
-                      'node_info':c_info,
-                      'edge_info':e_info}
+                    local_bonds = {i:cif_bonds[i] for i in cif_bonds.keys() if 
+                                 all([j in cluster.keys() for j in i])}
+                    mol = mol_string(cluster, local_bonds)
+                   #molfile = open(underlying_net['nodes'][node]['label']+".mol","w")
+                   #molfile.writelines(mol)
+                   #molfile.close()
+                   smiles = get_smiles(mol).strip()
+                   inchi = get_inchi(mol).strip()
+                   inchikey = get_inchikey(mol).strip()
+                   underlying_net['nodes'][node]['smiles'] = smiles
+                   underlying_net['nodes'][node]['inchi'] = inchi
+                   underlying_net['nodes'][node]['inchikey'] = inchikey
+                   #underlying_net['nodes'][node]['mol'] = mol
+                   inchikey_dic.setdefault(inchikey, []).append((node, mof))
+                   inchi_dic.setdefault(inchi, []).append((node, mof))
+                   smiles_dic.setdefault(smiles, []).append((node, mof))
+               elif underlying_net['nodes'][node]['metal']:
+                   cluster = get_metal_cluster(node, edge_space,
+                                               cif, underlying_net)
+                   local_bonds = {i:cif_bonds[i] for i in cif_bonds.keys() if
+                                  all([j in cluster.keys() for j in i])}
+                   mol = mol_string(cluster, local_bonds)
+                   #molfile = open(underlying_net['nodes'][node]['label']+".mol","w")
+                   #molfile.writelines(mol)
+                   #molfile.close()
+                   smiles = get_smiles(mol).strip()
+                   inchi = get_inchi(mol).strip()
+                   inchikey = get_inchikey(mol).strip()
+                   underlying_net['nodes'][node]['smiles'] = smiles
+                   underlying_net['nodes'][node]['inchi'] = inchi
+                   underlying_net['nodes'][node]['inchikey'] = inchikey
+                   #underlying_net['nodes'][node]['mol'] = mol
+                   inchikey_dic.setdefault(inchikey, []).append((node, mof))
+                   inchi_dic.setdefault(inchi, []).append((node, mof))
+                   smiles_dic.setdefault(smiles, []).append((node, mof))
+    
+           lines = to_cif(cif.atoms, cif.cell, cif.bonds, mof + ".lab")
+           cif_name = mof + ".lab.cif" 
+           output_file = open(cif_name, "w")
+           output_file.writelines(lines)
+           output_file.close()
+           reduce_size(underlying_net)
+           #pickle_file = open('%s.pkl'%mof, 'wb')
+           #pickle.dump(underlying_net, pickle_file)
+           #pickle_file.close()
+           nets[mof] = underlying_net
+           connect, edge, c_info, e_info = \
+                   gen_connect_edge_matrix(underlying_net, edge_space)
+    
+           mnets[mof] = {'cell':underlying_net['cell'],
+                         'connectivity_matrix':connect,
+                         'edge_matrix':edge,
+                         'node_info':c_info,
+                         'edge_info':e_info}
 
         if (count % options.report_frequency == 0 or count == (len(data)-1)): 
             p = percent_complete(count, len(data))
@@ -1565,10 +1569,10 @@ def main():
         #    nets.update(i)
         #for i in mnode_list:
         #    mnets.update(i)
-        pickle_file = open('mnets.pkl', 'wb')
+        pickle_file = open('m_%s.pkl'%(basename), 'wb')
         pickle.dump(mnets, pickle_file)
         pickle_file.close()
-        pickle_file = open("net.pkl", "wb")
+        pickle_file = open("net_%s.pkl"%(basename), "wb")
         pickle.dump(nets, pickle_file)
         pickle_file.close()
     #plot_net(underlying_net)
