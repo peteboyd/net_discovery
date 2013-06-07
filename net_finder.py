@@ -253,8 +253,12 @@ class GraphPlot(object):
                 
     def add_point(self, point=np.zeros(3), label=None, colour='r'):
         p = point.copy()
-        p = np.dot(p, self.cell) 
-        self.ax.scatter(*p, color=colour)
+        p = np.dot(p, self.cell)
+        try:
+            self.ax.scatter(*p, color=colour)
+        except TypeError:
+            p = p.tolist()
+            self.ax.scatter(p, color=colour)
         if label:
             self.ax.text(*p, s=label)
             
@@ -948,6 +952,8 @@ def clean(name):
         name = name[:-5]
     elif name.endswith('.out.cif'):
         name = name[:-8]
+    elif name.endswith('.out'):
+        name = name[:-4]
     elif name.endswith('.tar'):
         name = name[:-4]
     elif name.endswith('.db'):
@@ -1004,7 +1010,8 @@ def add_net_node(underlying_net, chunk, cif,
     return net_id 
 
 def extract_bu_chunks(mutable_cif_graph, underlying_net,
-                      local_bu_graphs, cif, net_chunks, tol):
+                      local_bu_graphs, cif, net_chunks, use_clique, tol):
+    metal_list = ["Cu", "Zn", "Cd", "Cr", "V", "In", "Ba", "Zr", "Mn"]
     bu_list = list(reversed(sorted([
                (count_non_hydrogens(g), i) for i, g in
                local_bu_graphs.items()])))
@@ -1016,29 +1023,15 @@ def extract_bu_chunks(mutable_cif_graph, underlying_net,
             # this is ugly
             sub_graph = {i:mutable_cif_graph[i].copy() for i in nchunk}
             # quick and dirty fix for pillars
-            if bu == 'm9':
-                if any([i['element'] == 'V' for i in sub_graph.values()]):
+            if bu.startswith('m'):
+                if any([i['element'] in metal_list for i in sub_graph.values()]):
                     pop_chunks(mutable_cif_graph, sub_graph, net_chunks, 
                                nchunk_ind)
                     net_id = add_net_node(underlying_net, sub_graph, 
                                           cif, _METAL=_METAL,
                                           _ORGANIC=_ORGANIC, label=bu)
-            elif bu == 'm12':
-                if any([i['element'] == 'Ni' for i in sub_graph.values()]):
-                    pop_chunks(mutable_cif_graph, sub_graph, net_chunks, 
-                               nchunk_ind)
-                    net_id = add_net_node(underlying_net, sub_graph, 
-                                          cif, _METAL=_METAL,
-                                          _ORGANIC=_ORGANIC, label=bu)
-            elif count > 19 or bu == 'o9':
-                c = count_non_hydrogens(sub_graph)
-                if c == count:
-                    pop_chunks(mutable_cif_graph, sub_graph, net_chunks, 
-                               nchunk_ind)
-                    net_id = add_net_node(underlying_net, sub_graph, 
-                                          cif, _METAL=_METAL,
-                                          _ORGANIC=_ORGANIC, label=bu)
-            else:
+            #elif count > 19 or bu == 'o9':
+            if use_clique and not bu.startswith('m'):
                 chunk = extract_clique(sub_graph, bu_graph, 
                                H_MATCH=False, tol=tol)
                 while chunk:
@@ -1049,6 +1042,18 @@ def extract_bu_chunks(mutable_cif_graph, underlying_net,
                                           _ORGANIC=_ORGANIC, label=bu)
                     chunk = extract_clique(sub_graph, bu_graph, 
                                     H_MATCH=False, tol=tol)
+            elif not use_clique and not bu.startswith('m'):
+                #c = count_non_hydrogens(sub_graph)
+                net_atoms = sorted([i['element'] for i in sub_graph.values()
+                                      if i['element'] != "H"])
+                bu_atoms = sorted([i['element'] for i in bu_graph.values()
+                                   if i['element'] != "H"])
+                if net_atoms == bu_atoms:
+                    pop_chunks(mutable_cif_graph, sub_graph, net_chunks, 
+                               nchunk_ind)
+                    net_id = add_net_node(underlying_net, sub_graph, 
+                                          cif, _METAL=_METAL,
+                                          _ORGANIC=_ORGANIC, label=bu)
 
 def bonded_node(gr1, gr2):
     bonding_nodes1 = {node1: node2 for node1 in gr1.keys() for node2 in
@@ -1436,6 +1441,7 @@ def main():
     inchikey_dic = {}
     inchi_dic = {}
     smiles_dic = {}
+    rerun = []
     basename = options.csv_file[:-4]
     dummy = "dummy"
     # parallelize this stuff
@@ -1465,6 +1471,12 @@ def main():
         iter_count = 0
         tol = options.tolerance
         store = True
+        met, org1, org2, top, fnum = parse_mof_name(mof)
+        if org1 != org2:
+            use_clique = count_non_hydrogens(bu_graphs[org1]) == \
+                         count_non_hydrogens(bu_graphs[org2])
+        else:
+            use_clique = False
         while not done:
             iter_count += 1
             cif_graph, cif_bonds = gen_graph_faps(cif)
@@ -1480,7 +1492,7 @@ def main():
                            tol)
             local_bu_graphs = gen_local_bus(mof, bu_graphs)
             extract_bu_chunks(mutable_cif_graph, underlying_net,
-                           local_bu_graphs, cif, net_chunks, 
+                           local_bu_graphs, cif, net_chunks, use_clique,
                            tol)
 
             edge_space = calc_edges(underlying_net, cif)
@@ -1506,60 +1518,63 @@ def main():
                     local_bonds = {i:cif_bonds[i] for i in cif_bonds.keys() if 
                                  all([j in cluster.keys() for j in i])}
                     mol = mol_string(cluster, local_bonds)
-                   #molfile = open(underlying_net['nodes'][node]['label']+".mol","w")
-                   #molfile.writelines(mol)
-                   #molfile.close()
-                   smiles = get_smiles(mol).strip()
-                   inchi = get_inchi(mol).strip()
-                   inchikey = get_inchikey(mol).strip()
-                   underlying_net['nodes'][node]['smiles'] = smiles
-                   underlying_net['nodes'][node]['inchi'] = inchi
-                   underlying_net['nodes'][node]['inchikey'] = inchikey
-                   #underlying_net['nodes'][node]['mol'] = mol
-                   inchikey_dic.setdefault(inchikey, []).append((node, mof))
-                   inchi_dic.setdefault(inchi, []).append((node, mof))
-                   smiles_dic.setdefault(smiles, []).append((node, mof))
-               elif underlying_net['nodes'][node]['metal']:
-                   cluster = get_metal_cluster(node, edge_space,
-                                               cif, underlying_net)
-                   local_bonds = {i:cif_bonds[i] for i in cif_bonds.keys() if
-                                  all([j in cluster.keys() for j in i])}
-                   mol = mol_string(cluster, local_bonds)
-                   #molfile = open(underlying_net['nodes'][node]['label']+".mol","w")
-                   #molfile.writelines(mol)
-                   #molfile.close()
-                   smiles = get_smiles(mol).strip()
-                   inchi = get_inchi(mol).strip()
-                   inchikey = get_inchikey(mol).strip()
-                   underlying_net['nodes'][node]['smiles'] = smiles
-                   underlying_net['nodes'][node]['inchi'] = inchi
-                   underlying_net['nodes'][node]['inchikey'] = inchikey
-                   #underlying_net['nodes'][node]['mol'] = mol
-                   inchikey_dic.setdefault(inchikey, []).append((node, mof))
-                   inchi_dic.setdefault(inchi, []).append((node, mof))
-                   smiles_dic.setdefault(smiles, []).append((node, mof))
+                    #molfile = open(underlying_net['nodes'][node]['label']+".mol","w")
+                    #molfile.writelines(mol)
+                    #molfile.close()
+                    smiles = get_smiles(mol).strip()
+                    inchi = get_inchi(mol).strip()
+                    inchikey = get_inchikey(mol).strip()
+                    underlying_net['nodes'][node]['smiles'] = smiles
+                    underlying_net['nodes'][node]['inchi'] = inchi
+                    underlying_net['nodes'][node]['inchikey'] = inchikey
+                    #underlying_net['nodes'][node]['mol'] = mol
+                    inchikey_dic.setdefault(inchikey, []).append((node, mof))
+                    inchi_dic.setdefault(inchi, []).append((node, mof))
+                    smiles_dic.setdefault(smiles, []).append((node, mof))
+                elif underlying_net['nodes'][node]['metal']:
+                    cluster = get_metal_cluster(node, edge_space,
+                                                cif, underlying_net)
+                    local_bonds = {i:cif_bonds[i] for i in cif_bonds.keys() if
+                                   all([j in cluster.keys() for j in i])}
+                    mol = mol_string(cluster, local_bonds)
+                    #molfile = open(underlying_net['nodes'][node]['label']+".mol","w")
+                    #molfile.writelines(mol)
+                    #molfile.close()
+                    smiles = get_smiles(mol).strip()
+                    inchi = get_inchi(mol).strip()
+                    inchikey = get_inchikey(mol).strip()
+                    underlying_net['nodes'][node]['smiles'] = smiles
+                    underlying_net['nodes'][node]['inchi'] = inchi
+                    underlying_net['nodes'][node]['inchikey'] = inchikey
+                    #underlying_net['nodes'][node]['mol'] = mol
+                    inchikey_dic.setdefault(inchikey, []).append((node, mof))
+                    inchi_dic.setdefault(inchi, []).append((node, mof))
+                    smiles_dic.setdefault(smiles, []).append((node, mof))
+                    
+            lines = to_cif(cif.atoms, cif.cell, cif.bonds, mof + ".lab")
+            cif_name = mof + ".lab.cif" 
+            output_file = open(cif_name, "w")
+            output_file.writelines(lines)
+            output_file.close()
+            reduce_size(underlying_net)
+            #pickle_file = open('%s.pkl'%mof, 'wb')
+            #pickle.dump(underlying_net, pickle_file)
+            #pickle_file.close()
+            nets[mof] = underlying_net
+            connect, edge, c_info, e_info = \
+                    gen_connect_edge_matrix(underlying_net, edge_space)
     
-           lines = to_cif(cif.atoms, cif.cell, cif.bonds, mof + ".lab")
-           cif_name = mof + ".lab.cif" 
-           output_file = open(cif_name, "w")
-           output_file.writelines(lines)
-           output_file.close()
-           reduce_size(underlying_net)
-           #pickle_file = open('%s.pkl'%mof, 'wb')
-           #pickle.dump(underlying_net, pickle_file)
-           #pickle_file.close()
-           nets[mof] = underlying_net
-           connect, edge, c_info, e_info = \
-                   gen_connect_edge_matrix(underlying_net, edge_space)
-    
-           mnets[mof] = {'cell':underlying_net['cell'],
-                         'connectivity_matrix':connect,
-                         'edge_matrix':edge,
-                         'node_info':c_info,
-                         'edge_info':e_info}
+            mnets[mof] = {'cell':underlying_net['cell'],
+                          'connectivity_matrix':connect,
+                          'edge_matrix':edge,
+                          'node_info':c_info,
+                          'edge_info':e_info}
 
-        if (count % options.report_frequency == 0 or count == (len(data)-1)): 
-            p = percent_complete(count, len(data))
+        else:
+            rerun.append(mof)
+
+        if (count % options.report_frequency == 0 or count == (len(data[rank])-1)):
+            p = percent_complete(count, len(data[rank]))
             info("rank %i is %5.3f %% complete"%(rank, p))
             
     #node_list =  comm.gather(nets, root=0)
@@ -1575,6 +1590,9 @@ def main():
         pickle_file = open("net_%s.pkl"%(basename), "wb")
         pickle.dump(nets, pickle_file)
         pickle_file.close()
+        info("MOFs to re-analyze")
+        for m in rerun:
+            info("%s"%(m))
     #plot_net(underlying_net)
 if __name__ == "__main__":
     main()
