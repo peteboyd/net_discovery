@@ -1464,8 +1464,12 @@ def main():
         underlying_net = {'nodes':{}}
         info("rank %i, analyzing %s"%(rank, mof))
         cif = Structure(mof)
-        cif.from_file(os.path.join(options.lookup, 
+        try:
+            cif.from_file(os.path.join(options.lookup, 
                          mof), "cif", dummy)
+        except IOError:
+            cif.from_file(os.path.join(options.lookup,
+                          mof+".out"), "cif", dummy)
         underlying_net['cell'] = cif.cell.cell.copy()
         done = False
         iter_count = 0
