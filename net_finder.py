@@ -1180,16 +1180,23 @@ def obtain_coordinating_nodes(node, jnode, net):
 
     elif graph[node]['element'] == "P":
         if ["O", "O", "O"] == sorted(neighbour_types):
-            extended_neighbours = [j for i in neighbours for j in N(i, graph)
-                                   if j != node and 
-                                   graph[j]['element'] == 'C']
-            c1_neighbours = [j for i in extended_neigbours for j in N(i, graph) if 
+            # problem here where one of the neighbours in N(i, graph) was
+            # not one of the nodes in graph.
+            neighbour_nodes = [j for i in neighbours for j in N(i, graph)
+                               if j != node and j in graph.keys()]
+            extended_neighbours = [j for j in neighbour_nodes 
+                                   if graph[j]['element'] == 'C']
+             
+            c1_neighbours = [j for i in extended_neighbours for j in N(i, graph) if 
                               graph[j]['element'] != 'O']
-            c2_neighbours = [j for i in c1_neighbours for j in N(i, graph) if
+            c1_neighbour_nodes = [j for i in c1_neighbours for j in N(i, graph)
+                                  if j in graph.keys() and j not in 
+                                  extended_neighbours]
+            c2_neighbours = [j for j in c1_neighbour_nodes if
                               graph[j]['element'] != 'C']
             # note, not sure if Daff functionalized the ester moiety of the Ba
             # pillar, if he did, this does not capture the entire molecule.
-            return_grpah.update({i:graph[i] for i in neighbours +
+            return_graph.update({i:graph[i] for i in neighbours +
                                  extended_neighbours + 
                                  c1_neighbours +
                                  c2_neighbours})
