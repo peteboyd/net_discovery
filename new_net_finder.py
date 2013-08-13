@@ -80,8 +80,19 @@ class CSV(object):
         assert column in self._data.keys()
         return self._data[column]
 
+class SubGraph(object):
+    def __init__(self):
+        pass
+
+class CorrGraph(object):
+    """Correspondence graph"""
+    def __init__(self):
+        pass
+
 def main():
     mofs = CSV(options.csv_file)
+    # read in sbus
+    # generate distance matrices for the 'nodes' of the sbus
 
     for mof in mofs.get('MOFname'):
         print mof
@@ -93,6 +104,9 @@ def main():
             cif.from_file(os.path.join(options.lookup,
                           mof+".out"), "cif", '')
 
+        # generate distance matrix for the 'nodes' of the 3x3x3 mof
+        # correspondence graph --> pair all nodes of the graph and the
+        # sbu, create edges between nodes if their distance are the same?
 
 if __name__=="__main__":
     main()
