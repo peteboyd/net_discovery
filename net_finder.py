@@ -28,7 +28,7 @@ from random import choice
 #comm = MPI.COMM_WORLD
 #rank = comm.Get_rank()
 #size = comm.Get_size()
-options = options.Options(rank=0)
+options = options.Options()
 sys.path.append(options.faps_dir)
 from faps import Structure, Cell, Atom, Symmetry
 from function_switch import FunctionalGroupLibrary, FunctionalGroup

@@ -12,9 +12,8 @@ from StringIO import StringIO
 
 class Options(object):
     """Read in the options from the config file."""
-    def __init__(self, rank=0):
+    def __init__(self):
         # read in from the command line first
-        self.rank = rank
         self._command_options()
         self._init_logging()
         self.job = ConfigParser.SafeConfigParser()
@@ -115,7 +114,7 @@ class Options(object):
         logging.basicConfig(level=file_level,
                             format='[%(asctime)s] %(levelname)s %(message)s',
                             datefmt='%Y%m%d %H:%M:%S',
-                            filename="log.%i.out"%(self.rank),
+                            filename="log.out",
                             filemode='a')
 
         logging.addLevelName(10, '--')
