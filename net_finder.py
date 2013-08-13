@@ -876,6 +876,7 @@ def match(clique, g1, g2, H_MATCH, SO3H_MATCH):
 def extract_clique(g1, g2, H_MATCH=True, SO3H_MATCH=False, tol=0.3):
     kk = {}
     C = gen_correspondence_graph(g1, g2)
+    print "Size of graph", len(C.keys())
     gen_correspondence_neighbours(C, g1, g2, tol=tol)
     #cliques = sorted(list(bk([], C.keys(), [], C)), reverse=True)
     for J in bk([], C.keys(), [], C):
@@ -1186,9 +1187,9 @@ def obtain_coordinating_nodes(node, jnode, net):
                                if j != node and j in graph.keys()]
             extended_neighbours = [j for j in neighbour_nodes 
                                    if graph[j]['element'] == 'C']
-             
-            c1_neighbours = [j for i in extended_neighbours for j in N(i, graph) if 
-                              graph[j]['element'] != 'O']
+            n = [j for i in extended_neighbours for j in N(i, graph) if
+                    j != node and j in graph.keys()]
+            c1_neighbours = [j for j in n if graph[j]['element'] != 'O']
             c1_neighbour_nodes = [j for i in c1_neighbours for j in N(i, graph)
                                   if j in graph.keys() and j not in 
                                   extended_neighbours]
