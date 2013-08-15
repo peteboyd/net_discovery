@@ -6,6 +6,7 @@ import re
 import sys
 import copy
 import textwrap
+from ast import literal_eval
 from optparse import OptionParser
 import ConfigParser
 from StringIO import StringIO
@@ -154,38 +155,39 @@ class Options(object):
 
     def get_val(self, section, key):
         """Returns the proper type based on the key used."""
+        floats = ['tolerance']
+        booleans = []
+        integers = ['report_frequency']
+        lists = ['sbu_files', 'ignore_list']
+        tuples = ['supercell']
         # known booleans
-        if key == 'report' or key == 'extract' or key == 'dataset' or\
-                key == 'top_ranked' or key == 'random' or \
-                key == 'gaussian' or key == 'report_ngrid' or \
-                key == 'comparison':
+        if key in booleans: 
             try:
                 val = self.job.getboolean(section, key)
             except ValueError:
                 val = False
         # known integers
-        elif key == 'max_gridpoints' or key == 'total_mofs' or \
-                key == 'functional_max' or key == 'organic_max' or \
-                key == 'metal_max' or key == 'topology_max' or \
-                key == 'bin_interval' or key == 'report_frequency':
+        elif key in integers: 
             try: 
                 val = self.job.getint(section, key)
             except ValueError:
                 val = 0
         # known floats
-        elif key == 'uptake_cutoff' or key == 'tolerance':
+        elif key in floats: 
             try:
                 val = self.job.getfloat(section, key)
             except ValueError:
                 val = 0.
         # known lists
-        elif key == 'topologies' or key == 'fnl_include' or \
-            key == 'fnl_partial' or key == 'fnl_exclude' or \
-            key == 'org_include' or key == 'org_exclude' or \
-            key == 'metals' or key == 'combine':
+        elif key in lists:
             p = re.compile('[,;\s]+')
             val = p.split(self.job.get(section, key))
             val = [i for i in val if i]
+
+        # known tuples
+        elif key in tuples:
+            val = literal_eval(self.job.get(section, key)) 
+
         else:
             val = self.job.get(section, key)
         return val
