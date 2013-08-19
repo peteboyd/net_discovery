@@ -7,6 +7,7 @@ import itertools
 import ConfigParser
 from scipy.spatial import distance
 from time import time
+from copy import deepcopy
 import operator
 from logging import info, debug, warning, error, critical
 options = options.Options()
@@ -86,7 +87,8 @@ class SubGraph(object):
     def __init__(self, options, name="Default"):
         self.options = options
         self.name = name
-        self._coordinates = None 
+        self._coordinates = None
+        self._orig_index = []
 
     def from_faps(self, struct):
         cell = struct.cell.cell
@@ -96,11 +98,13 @@ class SubGraph(object):
         multiplier = reduce(operator.mul, self.options.supercell, 1)
         self._coordinates = np.empty((size*multiplier, 3), dtype=np.float64)
         self.elements = range(size*multiplier)
+        self._orig_index = range(size*multiplier)
+        supercell = list(itertools.product(*[itertools.product(range(j)) for j in
+                    self.options.supercell]))
         for id, atom in enumerate(struct.atoms):
-            supercell = itertools.product(*[itertools.product(range(j)) for j in
-                self.options.supercell])
-            # create 3x3x3 supercell to make sure all molecules are found
             for mult, scell in enumerate(supercell):
+                # keep symmetry translated index
+                self._orig_index[id + mult * size] = id
                 self.elements[id + mult * size] = atom.element    
                 fpos = atom.ifpos(inv_cell) + np.array([float(i[0]) for i in scell])
                 self._coordinates[id + mult * size][:] = np.dot(fpos, cell)
@@ -110,6 +114,7 @@ class SubGraph(object):
         self._coordinates = np.empty((size, 3), dtype=np.float64)
         self.elements = range(size)
         for id, atom in enumerate(sbu.atoms):
+            self._orig_index.append(id)
             self.elements[id] = atom.element
             self._coordinates[id][:] = atom.coordinates[:3]
    
@@ -136,6 +141,7 @@ class SubGraph(object):
 
     def __delitem__(self, x):
         del self.elements[x]
+        del self._orig_index[x]
         self._dmatrix = np.delete(self._dmatrix, x, axis=0)
         self._dmatrix = np.delete(self._dmatrix, x, axis=1)
         self._coordinates = np.delete(self._coordinates, x, axis=0)
@@ -146,6 +152,32 @@ class SubGraph(object):
     def __getitem__(self, x):
         return self.elements[x]
 
+    def __mod__(self, array):
+        """Returns a SubGraph object with only the elements contained
+        In array"""
+        sub = SubGraph(self.options, name=self.name)
+        size = len(array)
+        sub._dmatrix = np.zeros((size, size), dtype=np.float64)
+        for x, y in itertools.combinations(range(size), 2):
+            sub._dmatrix[x][y] = self._dmatrix[array[x]][array[y]]
+        sub.elements = [self[x] for x in array]
+        sub._coordinates = np.array([self._coordinates[x] for x in array],
+                                    dtype=np.float64)
+        sub._orig_index = [self._orig_index[x] for x in array]
+        return sub
+
+    def __iadd__(self, obj):
+        """Re-implements a Subgraph"""
+        # Need to re-compute distances.
+        try:
+            del self._dmatrix
+        except AttributeError:
+            pass
+        self.elements += obj.elements
+        self._coordinates = np.vstack((self._coordinates, obj._coordinates))
+        self._orig_index += obj._orig_index
+        return self
+
     @property
     def distances(self):
         try:
@@ -154,11 +186,9 @@ class SubGraph(object):
             self._dmatrix = distance.cdist(self._coordinates, self._coordinates)
             return self._dmatrix
 
-    def _debug(self):
-        defile = open("defile.xyz", "a")
-        defile.writelines("%i\nDefile\n"%(len(self)))
-        print len(self.elements)
-        print len(self._coordinates)
+    def debug(self, name="defile"):
+        defile = open(name+".xyz", "a")
+        defile.writelines("%i\n%s\n"%(len(self), name))
         for ind, (x, y, z) in enumerate(self._coordinates):
             defile.writelines("%s %12.5f %12.5f %12.5f\n"%(self[ind], x, y, z))
         defile.close()
@@ -201,6 +231,7 @@ class CorrGraph(object):
         self.adj_matrix = None
         del self._pair_graph
 
+    # this is really slow. Maybe implement in c++?
     def correspondence(self):
         sub1 = self.sub_graph
         sub2 = self._pair_graph
@@ -209,7 +240,7 @@ class CorrGraph(object):
         t1 = time()
         nodes = [x for x in 
                 itertools.product(range(len(sub1)), range(len(sub2)))
-                if sub1.elements[x[0]] == sub2.elements[x[1]]]
+                if sub1[x[0]] == sub2[x[1]]]
         self.nodes = [(ind, x[0], x[1]) for ind, x in enumerate(nodes)]
         self.size = len(self.nodes)
         self.adj_matrix = np.zeros((self.size, self.size), dtype=np.int32)
@@ -267,26 +298,45 @@ class Net(object):
             clq.pair_graph = sbu_graph
             generator = self.gen_cliques(clq)
             for clique in generator:
-                print clique
+                # this line is why you need special identifiers for each node.
+                clique.debug("sbus")
 
     def gen_cliques(self, clq):
+        """The maxclique algorithm is non-discriminatory about the types
+        of nodes it selects in the clique, therefore one SBU could be found
+        in a maxclique from another SBU in the MOF.  To take measures against
+        this, these cliques need to be ignored.  They are therefore
+        removed, and re-instated after the algorithm has extracted all
+        max cliques."""
         done = False
-        compare_elements = clq.pair_graph.get_elements() 
+        compare_elements = clq.pair_graph.get_elements()
+        replace = []
         while not done:
             clq.correspondence()
             mc = clq.extract_clique()
             sub_nodes = sorted([clq[i] for i in mc])
             # get elements from sub_graph
-            elem = clq.sub_graph.get_elements(sub_nodes) 
+            elem = clq.sub_graph.get_elements(sub_nodes)
+            all_elem = clq.sub_graph.get_elements(sub_nodes, 
+                                                  NO_H=False)
             # compare with elements from pair_graph
             if elem == compare_elements:
+                clique = clq.sub_graph % sub_nodes
                 for xx in reversed(sub_nodes):
                     del clq.sub_graph[xx]
-                #clq.sub_graph._debug()
-                yield sub_nodes
+                #clq.sub_graph.debug()
+                yield clique
+            # in this instance we have found a clique not
+            # belonging to the SBU. Remove, then replace
+            elif len(all_elem) >= len(compare_elements):
+                replace.append(clq.sub_graph % sub_nodes)
+                for xx in reversed(sub_nodes):
+                    del clq.sub_graph[xx]
             else:
+                # reinsert false positive cliques
+                for sub in replace:
+                    clq.sub_graph += sub
                 done = True
-            # yield good result, or done = False
 
     def parse_groin_mofname(self, mof):
         """metal, organic1, organic2, topology, functional group code"""
@@ -298,7 +348,6 @@ class Net(object):
         top = pp[0]
         fnl = pp[2]
         return met, o1, o2, top, fnl
-
 
 def read_sbu_files(options):
     sbus = {}
