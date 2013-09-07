@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import pickle
 import options
 import sys
 import os
@@ -8,8 +9,11 @@ import ConfigParser
 from scipy.spatial import distance
 from time import time
 from copy import copy
+import pybel
+pybel.ob.obErrorLog.StopLogging()
 import operator
 from logging import info, debug, warning, error, critical
+from options import clean
 options = options.Options()
 sys.path.append(options.faps_dir)
 from faps import Structure
@@ -29,13 +33,16 @@ class CSV(object):
     def __init__(self, filename):
         self.filename = filename
         self._data = {}
-        if not os.path.isfile(filename):
-            error("Could not find the file: %s"%filename)
-            sys.exit(1)
-        head_read = open(filename, "r")
-        self.headings = head_read.readline().lstrip("#").split(",")
-        head_read.close()
-        self._read()
+        self.headings = []
+
+    def add_data(self, **kwargs):
+        for key, value in kwargs.items():
+            try:
+                self.headings.index(key)
+                self._data[key].append(value)
+            except ValueError:
+                self.headings.append(key)
+                self._data[key] = [value]
 
     def obtain_data(self, column, _TYPE="float", **kwargs):
         """return the value of the data in column, based on values of 
@@ -63,9 +70,13 @@ class CSV(object):
 
         return self._data[column][matches[0]]
 
-    def _read(self):
+    def read(self):
         """The CSV dictionary will store data to heading keys"""
+        if not os.path.isfile(filename):
+            error("Could not find the file: %s"%filename)
+            sys.exit(1)
         filestream = open(self.filename, "r")
+        self.headings = filestream.readline().lstrip("#").split(",")
         burn = filestream.readline()
         for line in filestream:
             if not line.startswith("#"):
@@ -79,6 +90,14 @@ class CSV(object):
                         pass
                     self._data.setdefault(self.headings[ind], []).append(entry)
         filestream.close()
+    
+    def write(self):
+        string = ",".join(self.headings) + "\n"
+        for line in zip(*[self._data[i] for i in self.headings]):
+            string += ",".join(line) + "\n"
+        file = open(self.filename, "w")
+        file.writelines(string)
+        file.close()
 
     def get(self, column):
         assert column in self._data.keys()
@@ -242,10 +261,13 @@ class SubGraph(object):
         except AttributeError:
             pass
         self.elements += obj.elements
-        self._coordinates = np.vstack((self._coordinates, obj._coordinates))
+        try:
+            self._coordinates = np.vstack((self._coordinates, obj._coordinates))
+        except ValueError:
+            self._coordinates = obj._coordinates.copy()
         self._orig_index += obj._orig_index
         self._new_index += obj._new_index
-        self.bonds.update(ojb.bonds)
+        self.bonds.update(obj.bonds)
         return self
 
     @property
@@ -268,7 +290,16 @@ class SubGraph(object):
         defile.close()
 
 class OrganicSBU(SubGraph):
- 
+
+    def __init__(self, options, name="Default"):
+        self.options = options
+        self.name = name
+        self._elements = []
+        self._coordinates = np.array([]) 
+        self._orig_index = []
+        self._new_index = []
+        self.bonds = {}
+
     def to_mol(self):
         """Convert fragment to a string in .mol format"""
         header = "Organic\n %s\n\n"%(self.name)
@@ -276,35 +307,33 @@ class OrganicSBU(SubGraph):
         atom_block = "%10.4f%10.4f%10.4f %3s%2i%3i%3i%3i%3i%3i%3i%3i%3i%3i%3i%3i\n"
         bond_block = "%3i%3i%3i%3i%3i%3i%3i\n"
         mol_string = header
-        mol_string += counts%(len(self), len(self.bond.keys()), 0, 0, 0, 0, 0, 0, 0)
+        mol_string += counts%(len(self), len(self.bonds.keys()), 0, 0, 0, 0, 0, 0, 0)
         atom_order = []
         for i in range(len(self)):
             pos = self._coordinates[i]
-            mol_string += atom_block%(pos[0], pos[1], pos[2], self.elements[i])
-            atom_order.append(self._new_index[i])
+            mol_string += atom_block%(pos[0], pos[1], pos[2], self.elements[i],
+                                      0,0,0,0,0,0,0,0,0,0,0,0)
+            atom_order.append(self._orig_index[i])
 
-        for bond, type in self.bond.items():
+        for bond, type in self.bonds.items():
             ind1 = atom_order.index(bond[0]) + 1
             ind2 = atom_order.index(bond[1]) + 1
             b_order = 4 if type == 1.5 else type
             mol_string += bond_block%(ind1, ind2, b_order, 0, 0, 0, 0)
         return mol_string
+    
+    def update_bonds(self, bond_dic):
+        for (i, j), type in bond_dic.items():
+            if i in self._orig_index and j in self._orig_index:
+                self.bonds.update({(i,j):type})
 
-    def obtain_coordinating_groups(self, coord_groups, graph):
-        """Takes a graph of SBU fragments as arguments and searches for 
-        bonding coord groups with itself. These bonding groups are
-        then added."""
-        # search the graph edges for bonds with metalic SBUs
-
-        # once found, find all coordinating groups of a specific kind
-
-        # the coordinating groups are then appended here.
-
-    def obtain_coordinating_functional_groups(self, graph):
-        """Takes a graph of SBU fragments as arguments and searches
-        for bonding with functional groups. These functional groups are
-        then added to this SBU."""
-        pass
+    def inchikey(self):
+        """Return the inchikey"""
+        string = self.to_mol()
+        conv = pybel.ob.OBConversion()
+        conv.SetOutFormat('inchikey')
+        mol = pybel.readstring('mol', string)
+        return conv.WriteString(mol.OBMol)
 
 class CorrGraph(object):
     """Correspondence graph"""
@@ -373,7 +402,8 @@ class CorrGraph(object):
             debug("Edge density = %f"%(float(self.edge_count)*2./
                                     (float(self.size)*(float(self.size)-1))))
         except ZeroDivisionError:
-            warning("No correspondence graph could be generated for %s"%sub2.name)
+            return
+            #warning("No correspondence graph could be generated for %s"%sub2.name)
 
     def __getitem__(self, i):
         """Return the indices of the first subgraph from the
@@ -441,11 +471,19 @@ class FunctionalGroups(object):
                 self._group_lookup[mofname]]
 
 class Net(object):
+    # coordinating species
+    species = {'m1':'carboxylate', 'm2':'carboxylate',
+               'm3':'carboxylate', 'm4':'carboxylate',
+               'm5':'carboxylate', 'm6':'tetrazole',
+               'm7':'carboxylate', 'm8':'carboxylate',
+               'm9':'carboxylate', 'm10':'phosphonateester',
+               'm11':'carboxylate','m12':'pyrazole'}
 
     def __init__(self, options, mof):
         """Convert a faps Structure object into a net."""
         self.options = options
         self.mof = mof
+        self.name = mof.name
         self.cell = mof.cell.cell
         self.icell = np.linalg.inv(mof.cell.cell.T)
         self.fragments = []
@@ -457,8 +495,8 @@ class Net(object):
             self.main_sub_graph.from_faps(mof)
             self.main_sub_graph.compute_bonds()
 
-    def get_groin_sbus(self, sbus, mofname):
-        met, o1, o2, top, fnl = self.parse_groin_mofname(mofname)
+    def get_groin_sbus(self, sbus):
+        met, o1, o2, top, fnl = self.parse_groin_mofname()
         sbu_list = []
         for i, sbu in sbus.items():
             if i.rstrip('s') in [met, o1, o2]:
@@ -471,7 +509,7 @@ class Net(object):
     def from_groin_mof(self, sbus, fnls):
         """Extract the sbus from groin mofs."""
         debug("Size of mof = %i"%(len(self.mof.atoms)))
-        sbu_list = self.get_groin_sbus(sbus, self.mof.name)
+        sbu_list = self.get_groin_sbus(sbus)
         sub_graph_copy = self.main_sub_graph % range(len(self.main_sub_graph))
         clq = CorrGraph(self.options, sub_graph_copy)
         # get the sbus and functional groups, sort them
@@ -579,6 +617,8 @@ class Net(object):
         edge_pop = []
         for edge_id, edge in enumerate(self.edge_matrix):
             ids = [id for id, i in enumerate(edge) if i]
+            # if any node in an edge matrix row corresponds to image bonding
+            # with an image, delete.
             if all([i in images for i in ids]):
                 edge_pop.append(edge_id)
             else:
@@ -589,6 +629,7 @@ class Net(object):
         for xx in reversed(sorted(images)):
             self.nodes.pop(xx)
             self.fragments.pop(xx)
+            # delete images from the edge matrix
             self.edge_matrix = np.delete(self.edge_matrix, xx, axis=1)
         for xy in reversed(sorted(edge_pop)):
             self.edge_matrix = np.delete(self.edge_matrix, xy, axis=0)
@@ -596,7 +637,17 @@ class Net(object):
 
     def edge_exists(self, sub1, sub2):
         return any([tuple(sorted(list(i))) in self.main_sub_graph.bonds.keys() for i
-            in itertools.product(sub1._new_index, sub2._new_index)]) 
+            in itertools.product(sub1._new_index, sub2._new_index)])
+
+    def bond_exists(self, sub1, sub2):
+        """Returns the indices of the atom elements found in sub1 and sub2
+        in the form (sub1 index, sub2 index) if they are bonded together.
+        """
+        for i in itertools.product(sub1._orig_index, sub2._orig_index):
+            if tuple(sorted(list(i))) in self.mof.bonds.keys():
+                return (sub1._orig_index.index(i[0]),
+                        sub2._orig_index.index(i[1]))
+        return () 
 
     def gen_cliques(self, clq, NO_H=True):
         """The maxclique algorithm is non-discriminatory about the types
@@ -614,6 +665,8 @@ class Net(object):
         replace = []
         while not done:
             clq.correspondence()
+            if not clq.size:
+                return
             mc = clq.extract_clique()
             sub_nodes = sorted([clq[i] for i in mc])
             # get elements from sub_graph
@@ -645,9 +698,9 @@ class Net(object):
                     clq.sub_graph += sub
                 done = True
 
-    def parse_groin_mofname(self, mof):
+    def parse_groin_mofname(self):
         """metal, organic1, organic2, topology, functional group code"""
-        ss = mof.split("_")
+        ss = self.mof.name.split("_")
         met = ss[1]
         o1 = ss[2]
         o2 = ss[3]
@@ -680,6 +733,96 @@ class Net(object):
 
         gp.plot()
 
+    @property
+    def coordination_units(self):
+        try:
+            return self._coord_units
+        except AttributeError:
+            self._coord_units = {}
+            for file in self.options.coord_unit_files:
+                config = ConfigParser.SafeConfigParser()
+                config.read(os.path.expanduser(file))
+                for _io in config.sections():
+                    coord = SBU()
+                    coord.from_config(_io, config)
+                    # create the subgraph
+                    graph = SubGraph(self.options, _io)
+                    graph.from_sbu(coord)
+                    self._coord_units[_io] = graph
+            return self._coord_units
+
+    def organic_data(self):
+        """Determine the organic SBUs in the list of fragments,
+        then add the coordinating atoms, compute the inchikey,
+        report.."""
+        #TODO(pboyd): this probably could be a little more
+        # 'object oriented'
+        organic_dic = {}
+        coord_units = self.coordination_units
+        met, b,b,b,b = self.parse_groin_mofname()
+        for id, node in enumerate(self.nodes):
+            frag = self.fragments[id]
+            if not frag.name.startswith('o'):
+                continue
+            # determine bonding nodes
+            org_sbu = OrganicSBU(self.options, name=frag.name)
+            org_sbu += frag 
+            neighbours = set(self.get_neighbours(id))
+            for neighbour in neighbours:
+                n_frag = self.fragments[neighbour]
+                # metal test
+                if n_frag.name.startswith('m'):
+                    graph = n_frag % range(len(n_frag))
+                    clq = CorrGraph(self.options, graph)
+                    # the following assumes a groin mof
+                    clq.pair_graph = coord_units[self.species[met]]
+                    generator = self.gen_cliques(clq)
+                    for g in generator:
+                        btest = self.bond_exists(frag, g)
+                        if btest:
+                            f1, f2 = btest
+                            # do some shifting.
+                            self.min_img_shift(frag._coordinates[f1],
+                                                g)
+                            # append g to the subgraph.
+                            org_sbu += g
+                    continue
+
+                fnl_bond = self.bond_exists(frag, n_frag)
+                if fnl_bond:
+                    b1, b2 = fnl_bond
+                    self.min_img_shift(frag._coordinates[b1],
+                                       n_frag)
+                    org_sbu += n_frag
+            # just copy over all the bonds in the original MOF..
+            # i don't care anymore.
+            org_sbu.bonds = {}
+            org_sbu.update_bonds(self.mof.bonds)
+            org_sbu.debug('org_sbu')
+            organic_dic.update({org_sbu.inchikey(): org_sbu.to_mol()})
+        return organic_dic
+
+    def min_img_shift(self, coordinate, subg):
+        """Shifts the subgraph 'subg's coordinates to the minimum
+        image of coordinate"""
+        fcoord = np.dot(self.icell, coordinate)
+        for id, coord in enumerate(subg._coordinates):
+            scaled = np.dot(self.icell, coord)
+            shift = np.around(fcoord - scaled)
+            subg._coordinates[id] = np.dot(scaled + shift, self.cell)
+
+    def get_neighbours(self, idx):
+        """Return the indices of the nodes corresponding to neighbours
+        of the node who's entry is id."""
+        neighbours = []
+        for edge in self.edge_matrix:
+            bonded_nodes = [id for id, i in enumerate(edge) if i]
+            if idx in bonded_nodes:
+                rem = bonded_nodes.index(idx)
+                add_node = bonded_nodes[1%rem]
+                neighbours.append(add_node)
+        return neighbours
+
 def read_sbu_files(options):
     sbus = {}
     for file in options.sbu_files:
@@ -694,13 +837,24 @@ def read_sbu_files(options):
             sbus[name] = sbu
     return sbus
 
+def pickler(options, dic, inchi=False):
+    """write the dictionary to a pickle file"""
+    pickle_name = clean(os.path.basename(options.input_file))
+    pickle_name += "_inchi" if inchi else ""
+    pickle_file = open(pickle_name+".pkl", "wb")
+    pickle.dump(dic, pickle_file)
+    pickle_file.close()
+
 def main():
     mofs = CSV(options.csv_file)
+    good_mofs = CSV(clean(options.input_file)+"_complete_nets.csv")
+    bad_mofs = CSV(clean(options.input_file)+"_bad.csv")
+    mofs.read()
     # read in sbus
     sbus = read_sbu_files(options)
     # read in functional groups
     fnls = FunctionalGroups(options)
-
+    nets, inchikeys = {}, {}
     for mof_name in mofs.get('MOFname'):
         mof = Structure(mof_name)
         try:
@@ -721,10 +875,16 @@ def main():
             net.get_edges()
             net.get_nodes()
             net.prune_unit_cell()
-            net.show()
-        # generate distance matrix for the 'nodes' of the 3x3x3 mof
-        # correspondence graph --> pair all nodes of the graph and the
-        # sbu, create edges between nodes if their distance are the same?
+            nets[net.name] = net
+            inchikeys.update(net.organic_data())
+            good_mofs.add_data(MOFname=mof_name)
+        else:
+            bad_mofs.add_data(MOFname=mof_name)
+
+    pickler(options, nets)
+    pickler(options, inchikeys, inchi=True)
+    good_mofs.write()
+    bad_mofs.write()
 
 if __name__=="__main__":
     main()

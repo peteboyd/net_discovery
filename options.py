@@ -15,6 +15,7 @@ class Options(object):
     """Read in the options from the config file."""
     def __init__(self):
         # read in from the command line first
+        self.input_file = None
         self._command_options()
         self._init_logging()
         self.job = ConfigParser.SafeConfigParser()
@@ -47,8 +48,8 @@ class Options(object):
 
     def _load_job(self):
         """Load data from the local job name."""
-        if self.cmd_opts.input_file is not None:
-            job_path = os.path.join(self.job_dir, self.cmd_opts.input_file)
+        if self.input_file is not None:
+            job_path = os.path.join(self.job_dir, self.input_file)
             try:
                 filetemp = open(job_path, 'r')
                 job = filetemp.read()
@@ -67,17 +68,6 @@ class Options(object):
 
         usage = "%prog [options]"
         parser = OptionParser(usage=usage)
-        parser.add_option("-f", "--file", action="store", type="string",
-                          dest="input_file", default="None",
-                          help="Specify a job-specific input file.")
-        parser.add_option("-C", "--combine", type="string",
-                          dest="combine", action="callback",
-                          callback=self.parse_commas,
-                          help="comma (,) delimited list of csv files to " + \
-                          "merge into a larger file.")
-        parser.add_option("-e", "--extract", action="store",
-                          dest='extract',
-                          help="Extract info from the supplied file name.")
         parser.add_option("-Q", "--sqlfile", action="store",
                           dest="sql_file",
                           help="Specify the sql file containing all " + \
@@ -92,10 +82,11 @@ class Options(object):
                           dest="verbose",
                           help="Print everything to the console.")
         (local_options, local_args) = parser.parse_args()
-        #if len(sys.argv) == 1:
-        #    parser.print_help()
-        #    sys.exit(1)
         self.cmd_opts = local_options
+        if len(local_args) != 1:
+            parser.print_help()
+        else:
+            self.input_file = os.path.abspath(local_args[0])
 
     def _init_logging(self):
         """Initiate the logging"""
@@ -144,12 +135,6 @@ class Options(object):
         for key, value in self.job.items('job'):
             value = self.get_val('job', key)
             setattr(self, key, value)
-        # special option to over-ride the input file, so that
-        # extract can be easily issued from the command-line.
-        if self.cmd_opts.extract:
-            setattr(self, 'extract', True)
-            setattr(self, 'csv_file', self.cmd_opts.extract)
-        # option over-writes the sql file in the input file
         if self.cmd_opts.sql_file:
             setattr(self, 'sql_file', self.cmd_opts.sql_file)
 
@@ -158,7 +143,7 @@ class Options(object):
         floats = ['tolerance']
         booleans = ['mofs_from_groin']
         integers = ['report_frequency']
-        lists = ['sbu_files', 'ignore_list']
+        lists = ['sbu_files', 'coord_unit_files', 'ignore_list']
         tuples = ['supercell']
         # known booleans
         if key in booleans: 
@@ -224,3 +209,40 @@ class ColouredConsoleHandler(logging.StreamHandler):
             myrecord.msg, initial_indent=text, width=76,
             subsequent_indent='\033[0m   %s' % text) + '\033[0m'
         logging.StreamHandler.emit(self, myrecord)
+
+
+
+def clean(name):
+    if name.startswith('./run_x'):
+        name = name[10:]
+    if name.endswith('.cif'):
+        name = name[:-4]
+    elif name.endswith('.niss'):
+        name = name[:-5]
+    elif name.endswith('.out-CO2.csv'):
+        name = name[:-12]
+    elif name.endswith('-CO2.csv'):
+        name = name[:-8]
+    elif name.endswith('.flog'):
+        name = name[:-5]
+    elif name.endswith('.out.cif'):
+        name = name[:-8]
+    elif name.endswith('.out'):
+        name = name[:-4]
+    elif name.endswith('.tar'):
+        name = name[:-4]
+    elif name.endswith('.db'):
+        name = name[:-3]
+    elif name.endswith('.faplog'):
+        name = name[:-7]
+    elif name.endswith('.db.bak'):
+        name = name[:-7]
+    elif name.endswith('.csv'):
+        name = name[:-4]
+    elif name.endswith('.ini'):
+        name = name[:-4]
+    elif name.endswith('.dat'):
+        name = name[:-4]
+    elif name.endswith('.job'):
+        name = name[:-4]
+    return name
