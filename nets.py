@@ -1,0 +1,379 @@
+from correspondence_graphs import CorrGraph
+from sub_graphs import SubGraph, OrganicSBU
+from SecondaryBuildingUnit import SBU
+import itertools
+import ConfigParser
+import os
+from plotter import GraphPlot
+import numpy as np
+from logging import debug, warning
+
+class Net(object):
+    # coordinating species
+    species = {'m1':'carboxylate', 'm2':'carboxylate',
+               'm3':'carboxylate', 'm4':'carboxylate',
+               'm5':'carboxylate', 'm6':'tetrazole',
+               'm7':'carboxylate', 'm8':'carboxylate',
+               'm9':'carboxylate', 'm10':'phosphonateester',
+               'm11':'carboxylate','m12':'pyrazole'}
+
+    def __init__(self, options, mof):
+        """Convert a faps Structure object into a net."""
+        self.options = options
+        self.mof = mof
+        self.name = mof.name
+        self.cell = mof.cell.cell
+        self.icell = np.linalg.inv(mof.cell.cell.T)
+        self.fragments = []
+        self.nodes = []
+        self.edge_vectors = None
+        self.edge_matrix = None
+        self.main_sub_graph = SubGraph(self.options, self.mof.name)
+        if options.mofs_from_groin:
+            self.main_sub_graph.from_faps(mof)
+            self.main_sub_graph.compute_bonds()
+
+    def get_groin_sbus(self, sbus):
+        met, o1, o2, top, fnl = self.parse_groin_mofname()
+        sbu_list = []
+        for i, sbu in sbus.items():
+            if i.rstrip('s') in [met, o1, o2]:
+                sbu.name = i
+                non_hydrogen_count = len([i for i in sbu.atoms 
+                                      if i.element != "H"])
+                sbu_list.append((non_hydrogen_count, sbu))
+        return [i[1] for i in reversed(sorted(sbu_list))]
+
+    def from_groin_mof(self, sbus, fnls):
+        """Extract the sbus from groin mofs."""
+        debug("Size of mof = %i"%(len(self.mof.atoms)))
+        sbu_list = self.get_groin_sbus(sbus)
+        sub_graph_copy = self.main_sub_graph % range(len(self.main_sub_graph))
+        clq = CorrGraph(self.options, sub_graph_copy)
+        # get the sbus and functional groups, sort them
+        # by length, then extract all the maximal cliques
+        # above a certain value.
+
+        if any(fnls):
+            for fnl in fnls:
+                clq.pair_graph = fnl
+                generator = self.gen_cliques(clq, NO_H=False)
+                for clique in generator:
+                    self.fragments.append(clique)
+                    clique.debug("fnls")
+
+        for sbu in sbu_list:
+            sbu_cliques = []
+            # this should be called from another function - no need
+            # to keep re-calculating this sub_graph
+            sbu_graph = SubGraph(self.options, sbu.name)
+            sbu_graph.from_sbu(sbu)
+            clq.pair_graph = sbu_graph
+            generator = self.gen_cliques(clq)
+            for clique in generator:
+                # this line is why you need special identifiers for each node.
+                self.fragments.append(clique)
+                clique.debug("sbus")
+        debug("There remains %i un-attached nodes. These will"%(len(clq.sub_graph)) +
+                " be ignored as they are considered fragments outside "+
+                "the periodic boundaries.")
+        self.get_dangling_hydrogens(clq.sub_graph)
+
+    def evaluate_completeness(self):
+        """Check against the original MOF to ensure that all atoms
+        are associated with a particular fragment (clique sub-graph)"""
+        original = range(len(self.mof.atoms))
+        fragments = set([i for j in self.fragments for i in j._orig_index])
+        return original == sorted(list(fragments))
+
+    def get_dangling_hydrogens(self, sub_graph):
+        for frag in self.fragments:
+            extra_bonds = [i[1] for i
+                            in itertools.product(frag._new_index, sub_graph._new_index)
+                            if tuple(sorted(list(i))) in self.main_sub_graph.bonds.keys()] 
+            for k in extra_bonds:
+                sub_index = sub_graph._new_index.index(k)
+                if sub_graph[sub_index] == "H":
+                    frag += (sub_graph % [sub_index])
+
+    def get_edges(self):
+        """Evaluate if an edge connects two fragments."""
+        # shift the centre of atoms of the main_sub_graph to the 
+        # centre of the cell.
+        frag_pairs = itertools.combinations([(i,frag) for i, frag in enumerate(self.fragments)], 2)
+        self.edge_vectors = [] 
+        self.edge_matrix = np.zeros((0, len(self.fragments)), dtype=np.int32)
+        for (ind1, frag1), (ind2, frag2) in frag_pairs:
+            if self.edge_exists(frag1, frag2):
+                edge_vector = frag1.centre_of_atoms - \
+                        frag2.centre_of_atoms
+                # create edge
+                edge = np.zeros(len(self.fragments), dtype=np.int32)
+                edge[ind1] = 1
+                edge[ind2] = 1
+                self.edge_matrix = np.vstack((self.edge_matrix, edge))
+                self.edge_vectors.append((frag2.centre_of_atoms, edge_vector))
+
+    def get_nodes(self):
+        for frag in self.fragments:
+            self.nodes.append((frag.name, frag.centre_of_atoms))
+
+    def prune_unit_cell(self):
+        """Keep only those nodes which reside in the unit cell.
+        Remove edges outside the unit cell."""
+        # This is disgusting code.
+        images = []
+        fractionals = []
+        for id, (name, node) in enumerate(self.nodes):
+            frac = np.dot(self.icell, node)
+            fractionals.append(frac)
+            if any(np.logical_or(frac>1., frac<-0.0001)):
+                images.append(id)
+        # find image in unit cell
+        unit_cells = [i for i in range(len(self.nodes)) if i not in images] 
+        correspondence = range(len(self.nodes))
+        node_shifts = []
+        for node in images:
+            f = fractionals[node]
+            min_img = np.array([i%1 for i in f])
+            node_img = [i for i in unit_cells if np.allclose(fractionals[i], 
+                        min_img, atol=1e-4)]
+            if len(node_img) == 0:
+                warning("Could not find the image for one of the fragments!")
+                return False
+                # append the node?
+                #self.nodes[node] = np.dot(min_img, self.cell)
+                #node_shifts.append(images.index(node))
+            elif len(node_img) > 1:
+                warning("Multiple images found in the unit cell!!!")
+                return False
+            else:
+                image = node_img[0]
+                correspondence[node] = image
+
+        # remove those nodes which needed to be shifted to the unit cell
+        for i in reversed(sorted(node_shifts)):
+            images.pop(i)
+        # finally, adjust the edge matrix to correspond to the minimum image
+        edge_pop = []
+        for edge_id, edge in enumerate(self.edge_matrix):
+            ids = [id for id, i in enumerate(edge) if i]
+            # if any node in an edge matrix row corresponds to image bonding
+            # with an image, delete.
+            if all([i in images for i in ids]):
+                edge_pop.append(edge_id)
+            else:
+                for ii in ids:
+                    edge[correspondence[ii]] = 1
+        # now remove unnecessary edges, nodes.
+        edge_pop = list(set(edge_pop))
+        for xx in reversed(sorted(images)):
+            self.nodes.pop(xx)
+            self.fragments.pop(xx)
+            # delete images from the edge matrix
+            self.edge_matrix = np.delete(self.edge_matrix, xx, axis=1)
+        for xy in reversed(sorted(edge_pop)):
+            self.edge_matrix = np.delete(self.edge_matrix, xy, axis=0)
+            self.edge_vectors.pop(xy)
+        return True
+
+    def edge_exists(self, sub1, sub2):
+        return any([tuple(sorted(list(i))) in self.main_sub_graph.bonds.keys() for i
+            in itertools.product(sub1._new_index, sub2._new_index)])
+
+    def bond_exists(self, sub1, sub2):
+        """Returns the indices of the atom elements found in sub1 and sub2
+        in the form (sub1 index, sub2 index) if they are bonded together.
+        """
+        for i in itertools.product(sub1._orig_index, sub2._orig_index):
+            if tuple(sorted(list(i))) in self.mof.bonds.keys():
+                return (sub1._orig_index.index(i[0]),
+                        sub2._orig_index.index(i[1]))
+        return () 
+
+    def gen_cliques(self, clq, NO_H=True):
+        """The maxclique algorithm is non-discriminatory about the types
+        of nodes it selects in the clique, therefore one SBU could be found
+        in a maxclique from another SBU in the MOF.  To take measures against
+        this, these cliques need to be ignored.  They are therefore
+        removed, and re-instated after the algorithm has extracted all
+        max cliques."""
+        done = False
+        if NO_H:
+            compare_elements = clq.pair_graph.get_elements()
+        else:
+            compare_elements = clq.pair_graph.get_elements(NO_H=False)
+
+        replace = []
+        while not done:
+            clq.correspondence()
+            if not clq.size:
+                return
+            mc = clq.extract_clique()
+            sub_nodes = sorted([clq[i] for i in mc])
+            # get elements from sub_graph
+            if NO_H:
+                elem = clq.sub_graph.get_elements(sub_nodes)
+            else:
+                elem = clq.sub_graph.get_elements(sub_nodes,
+                                                  NO_H=False)
+
+            all_elem = clq.sub_graph.get_elements(sub_nodes, 
+                                                  NO_H=False)
+            # compare with elements from pair_graph
+            if elem == compare_elements:
+                clique = clq.sub_graph % sub_nodes
+                clique.name = clq.pair_graph.name
+                for xx in reversed(sub_nodes):
+                    del clq.sub_graph[xx]
+                #clq.sub_graph.debug()
+                yield clique
+            # in this instance we have found a clique not
+            # belonging to the SBU. Remove, then replace
+            elif len(all_elem) >= len(compare_elements):
+                replace.append(clq.sub_graph % sub_nodes)
+                for xx in reversed(sub_nodes):
+                    del clq.sub_graph[xx]
+            else:
+                # reinsert false positive cliques
+                for sub in replace:
+                    clq.sub_graph += sub
+                done = True
+
+    def parse_groin_mofname(self):
+        """metal, organic1, organic2, topology, functional group code"""
+        ss = self.mof.name.split("_")
+        met = ss[1]
+        o1 = ss[2]
+        o2 = ss[3]
+        pp = ss[-1].split('.')
+        top = pp[0]
+        try:
+            fnl = pp[2]
+        except IndexError:
+            fnl = '0'
+        return met, o1, o2, top, fnl
+
+    def show(self):
+        gp = GraphPlot()
+        gp.plot_cell(cell=self.cell, colour='g')
+        for id, (name, node) in enumerate(self.nodes):
+            # metal == blue
+            if name.startswith('m'):
+                colour = 'b'
+            # organic == green
+            elif name.startswith('o'):
+                colour = 'g'
+            # functional group == red
+            else:
+                colour = 'r'
+            gp.add_point(point=node, label=name, colour=colour)
+     
+        for ind, (point,edge) in enumerate(self.edge_vectors):
+            # convert to fractional
+            plot_point = np.dot(self.icell, point)
+            plot_edge = np.dot(self.icell, edge)
+            gp.add_edge(plot_edge, origin=plot_point)
+
+        gp.plot()
+
+    @property
+    def coordination_units(self):
+        try:
+            return self._coord_units
+        except AttributeError:
+            self._coord_units = {}
+            for file in self.options.coord_unit_files:
+                config = ConfigParser.SafeConfigParser()
+                config.read(os.path.expanduser(file))
+                for _io in config.sections():
+                    coord = SBU()
+                    coord.from_config(_io, config)
+                    # create the subgraph
+                    graph = SubGraph(self.options, _io)
+                    graph.from_sbu(coord)
+                    self._coord_units[_io] = graph
+            return self._coord_units
+
+    def organic_data(self):
+        """Determine the organic SBUs in the list of fragments,
+        then add the coordinating atoms, compute the inchikey,
+        report.."""
+        #TODO(pboyd): this probably could be a little more
+        # 'object oriented'
+        organic_dic = {}
+        coord_units = self.coordination_units
+        met, b,b,b,b = self.parse_groin_mofname()
+        for id, (name, node) in enumerate(self.nodes):
+            frag = self.fragments[id]
+            if not frag.name.startswith('o'):
+                continue
+            # determine bonding nodes
+            org_sbu = OrganicSBU(self.options, name=frag.name)
+            org_sbu += frag 
+            neighbours = set(self.get_neighbours(id))
+            for neighbour in neighbours:
+                n_frag = self.fragments[neighbour]
+                # metal test
+                if n_frag.name.startswith('m'):
+                    graph = n_frag % range(len(n_frag))
+                    clq = CorrGraph(self.options, graph)
+                    # the following assumes a groin mof
+                    clq.pair_graph = coord_units[self.species[met]]
+                    generator = self.gen_cliques(clq)
+                    for g in generator:
+                        btest = self.bond_exists(frag, g)
+                        if btest:
+                            f1, f2 = btest
+                            # do some shifting.
+                            self.min_img_shift(frag._coordinates[f1],
+                                                g)
+                            # append g to the subgraph.
+                            org_sbu += g
+                    continue
+
+                fnl_bond = self.bond_exists(frag, n_frag)
+                if fnl_bond:
+                    b1, b2 = fnl_bond
+                    self.min_img_shift(frag._coordinates[b1],
+                                       n_frag)
+                    org_sbu += n_frag
+            # just copy over all the bonds in the original MOF..
+            # i don't care anymore.
+            org_sbu.bonds = {}
+            org_sbu.update_bonds(self.mof.bonds)
+            org_sbu.debug('org_sbu')
+            organic_dic.update({org_sbu.inchikey(): org_sbu.to_mol()})
+        return organic_dic
+
+    def min_img_shift(self, coordinate, subg):
+        """Shifts the subgraph 'subg's coordinates to the minimum
+        image of coordinate"""
+        fcoord = np.dot(self.icell, coordinate)
+        for id, coord in enumerate(subg._coordinates):
+            scaled = np.dot(self.icell, coord)
+            shift = np.around(fcoord - scaled)
+            subg._coordinates[id] = np.dot(scaled + shift, self.cell)
+
+    def get_neighbours(self, idx):
+        """Return the indices of the nodes corresponding to neighbours
+        of the node who's entry is id."""
+        neighbours = []
+        for edge in self.edge_matrix:
+            bonded_nodes = [id for id, i in enumerate(edge) if i]
+            if idx in bonded_nodes:
+                try:
+                    rem = bonded_nodes.index(idx)
+                    add_node = bonded_nodes[1%rem]
+                except ZeroDivisionError:
+                    add_node = bonded_nodes[1]
+                neighbours.append(add_node)
+        return neighbours
+
+    def pickle_prune(self):
+        """Delete extra data from net - so that the pickle file does not 
+        get too large."""
+        del self.fragments
+        del self.mof
+        del self.main_sub_graph
+        del self._coord_units
