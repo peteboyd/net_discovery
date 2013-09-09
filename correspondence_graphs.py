@@ -19,13 +19,42 @@ class CorrGraph(object):
 
 
     def extract_clique(self):
-        debug("Commencing maximum clique")
-        t1 = time()
-        mc = mcqd.maxclique(np.array(self.adj_matrix, copy=True, order="C", dtype=np.int32), self.size)
-        t2 = time() - t1
-        debug("clique found, length of clique = %i, time reports %f seconds"%(
-            len(mc), t2))
-        return mc
+        while 1:
+            debug("Commencing maximum clique")
+            t1 = time()
+            mc = mcqd.maxclique(np.array(self.adj_matrix, 
+                                         copy=True, 
+                                         order="C", 
+                                         dtype=np.int32), 
+                                self.size)
+            
+            # set adj_matrix entries to zero.
+            zero_inds = self.get_adj_indices(mc)
+            self.set_to_zero(zero_inds)
+
+            t2 = time() - t1
+            debug("clique found, length of clique = %i, "%(len(mc)) + 
+                  "time reports %f seconds"%(t2))
+
+            yield mc
+
+    def get_adj_indices(self, mc):
+        """Due to the simple way in which the correspondence graph is
+        constructed, the range of nodes corresponding to the nodes of the
+        sub_graph are easily detectable."""
+        indices = [self[i] for i in mc]
+        adj_indices = []
+        # expand indices based on the range of pairings
+        for i in indices:
+            adj_indices += [j for j in range(self.size) if self[j] == i]
+        return adj_indices
+
+    def set_to_zero(self, inds):
+        #set rows to zero
+        self.adj_matrix[inds] = self.adj_matrix[inds].clip(max=0)
+        #set cols to zero
+        for i in range(self.size):
+            self.adj_matrix[i][inds] = self.adj_matrix[i][inds].clip(max=0)
 
     @property
     def pair_graph(self):

@@ -203,15 +203,15 @@ class Net(object):
             compare_elements = clq.pair_graph.get_elements()
         else:
             compare_elements = clq.pair_graph.get_elements(NO_H=False)
-
-        replace = []
+        clq.correspondence_api()
+        mc = clq.extract_clique()
+        remove = []
         while not done:
             #clq.correspondence()
-            clq.correspondence_api()
             if not clq.size:
                 return
-            mc = clq.extract_clique()
-            sub_nodes = sorted([clq[i] for i in mc])
+            cc = mc.next()
+            sub_nodes = sorted([clq[i] for i in cc])
             # get elements from sub_graph
             if NO_H:
                 elem = clq.sub_graph.get_elements(sub_nodes)
@@ -225,20 +225,18 @@ class Net(object):
             if elem == compare_elements:
                 clique = clq.sub_graph % sub_nodes
                 clique.name = clq.pair_graph.name
-                for xx in reversed(sub_nodes):
-                    del clq.sub_graph[xx]
+                # permanently remove these nodes from the sub_graph
+                # so they are not found by other iterations.
+                remove += sub_nodes
                 #clq.sub_graph.debug()
                 yield clique
             # in this instance we have found a clique not
-            # belonging to the SBU. Remove, then replace
+            # belonging to the SBU. ignore
             elif len(all_elem) >= len(compare_elements):
-                replace.append(clq.sub_graph % sub_nodes)
-                for xx in reversed(sub_nodes):
-                    del clq.sub_graph[xx]
+                pass
             else:
-                # reinsert false positive cliques
-                for sub in replace:
-                    clq.sub_graph += sub
+                for xx in reversed(sorted(remove)):
+                    del clq.sub_graph[xx]
                 done = True
 
     def parse_groin_mofname(self):
