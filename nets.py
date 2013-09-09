@@ -137,7 +137,7 @@ class Net(object):
             f = fractionals[node]
             min_img = np.array([i%1 for i in f])
             node_img = [i for i in unit_cells if np.allclose(fractionals[i], 
-                        min_img, atol=1e-4)]
+                        min_img, atol=1e-3)]
             if len(node_img) == 0:
                 warning("Could not find the image for one of the fragments!")
                 return False
@@ -206,7 +206,8 @@ class Net(object):
 
         replace = []
         while not done:
-            clq.correspondence()
+            #clq.correspondence()
+            clq.correspondence_api()
             if not clq.size:
                 return
             mc = clq.extract_clique()

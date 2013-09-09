@@ -1,9 +1,11 @@
 import numpy as np
 from time import time
+import sys
 import _mcqd as mcqd
 import itertools
 from logging import debug, warning
 
+np.set_printoptions(threshold='nan')
 class CorrGraph(object):
     """Correspondence graph"""
     def __init__(self, options, sub_graph):
@@ -73,6 +75,31 @@ class CorrGraph(object):
         except ZeroDivisionError:
             return
             #warning("No correspondence graph could be generated for %s"%sub2.name)
+
+    def correspondence_api(self):
+
+        sub1 = self.sub_graph
+        sub2 = self._pair_graph
+        debug("Size of base sub graph = %i"%len(self.sub_graph))
+        debug("Computing correspondence graph with %s"%sub2.name)
+        t1 = time()
+        self.nodes = mcqd.correspondence(sub1.elements, sub2.elements)
+        self.size = len(self.nodes)
+        adj_matrix = mcqd.correspondence_edges(self.nodes, 
+                                               sub1.distances, 
+                                               sub2.distances,
+                                               self.options.tolerance)
+        self.adj_matrix = np.array(adj_matrix, dtype=np.int32)
+        self.nodes = [(i, j, k) for i, (j,k) in enumerate(self.nodes)]
+        self.edge_count = np.count_nonzero(self.nodes)
+        t2 = time() - t1
+        try:
+            debug("Correspondence completed after %f seconds"%t2)
+            debug("Size of correspondence graph = %i"%(self.size))
+            debug("Edge density = %f"%(float(self.edge_count)*2./
+                                    (float(self.size)*(float(self.size)-1))))
+        except ZeroDivisionError:
+            return
 
     def __getitem__(self, i):
         """Return the indices of the first subgraph from the
