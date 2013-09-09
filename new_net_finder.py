@@ -78,6 +78,7 @@ def main():
             else:
                 bad_mofs.add_data(MOFname=mof_name)
         else:
+            info("The underlying net of MOF %s could not be found"%(mof_name))
             bad_mofs.add_data(MOFname=mof_name)
 
     pickler(options, nets)
