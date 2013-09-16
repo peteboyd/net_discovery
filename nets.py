@@ -7,6 +7,9 @@ import os
 from plotter import GraphPlot
 import numpy as np
 from logging import debug, warning
+from scipy.spatial import distance
+from CIFer import CIF
+from elements import CCDC_BOND_ORDERS
 
 class Net(object):
     # coordinating species
@@ -132,28 +135,25 @@ class Net(object):
         # find image in unit cell
         unit_cells = [i for i in range(len(self.nodes)) if i not in images] 
         correspondence = range(len(self.nodes))
-        node_shifts = []
         for node in images:
             f = fractionals[node]
             min_img = np.array([i%1 for i in f])
+            # NOTE: THE ATOL set here seems extremely high for fractional
+            # coordinate images. This may need to be adjusted
             node_img = [i for i in unit_cells if np.allclose(fractionals[i], 
                         min_img, atol=1e-3)]
             if len(node_img) == 0:
+                # Just delete these nodes - they are likely cliques of fragmentated
+                # SBUs at the periodic boundaries.
                 warning("Could not find the image for one of the fragments!")
-                return False
-                # append the node?
-                #self.nodes[node] = np.dot(min_img, self.cell)
-                #node_shifts.append(images.index(node))
+                warning("Type: %s"%self.fragments[node].name)
+                warning("Fractional Corrdinates: %7.5f %7.5f %7.5f"%(tuple(f.tolist())))
             elif len(node_img) > 1:
                 warning("Multiple images found in the unit cell!!!")
                 return False
             else:
                 image = node_img[0]
                 correspondence[node] = image
-
-        # remove those nodes which needed to be shifted to the unit cell
-        for i in reversed(sorted(node_shifts)):
-            images.pop(i)
         # finally, adjust the edge matrix to correspond to the minimum image
         edge_pop = []
         for edge_id, edge in enumerate(self.edge_matrix):
@@ -360,14 +360,96 @@ class Net(object):
         neighbours = []
         for edge in self.edge_matrix:
             bonded_nodes = [id for id, i in enumerate(edge) if i]
-            if idx in bonded_nodes:
-                try:
-                    rem = bonded_nodes.index(idx)
-                    add_node = bonded_nodes[1%rem]
-                except ZeroDivisionError:
-                    add_node = bonded_nodes[1]
-                neighbours.append(add_node)
+            # in some cases fragmented nodes will create problems
+            # with the unit cell bonding
+            if not len(bonded_nodes) == 2:
+                continue
+            else:
+                if idx in bonded_nodes:
+                    try:
+                        rem = bonded_nodes.index(idx)
+                        add_node = bonded_nodes[1%rem]
+                    except ZeroDivisionError:
+                        add_node = bonded_nodes[1]
+                    neighbours.append(add_node)
         return neighbours
+
+    def to_cif(self):
+        c = CIF(name=self.name+".net")
+        # place the fragment info right before the atom block
+        c.insert_block_order("fragment", 4)
+        c.add_data("data", data_=self.name)
+        c.add_data("data", _audit_creation_date=CIF.label(c.get_time()))
+        c.add_data("data", _audit_creation_method=CIF.label("Net Finder v.%4.3f"%(
+                                                            self.options.version)))
+        # sym block
+        c.add_data("sym", _symmetry_space_group_name_H_M=CIF.label("P1"))
+        c.add_data("sym", _symmetry_Int_Tables_number=CIF.label("1"))
+        c.add_data("sym", _symmetry_cell_setting=CIF.label("triclinic"))
+
+        c.add_data("sym_loop", _symmetry_equiv_pos_as_xyz=
+                                CIF.label("'x, y, z'"))
+        c.add_data("cell", _cell_length_a=CIF.cell_length_a(self.mof.cell.a))
+        c.add_data("cell", _cell_length_b=CIF.cell_length_b(self.mof.cell.b))
+        c.add_data("cell", _cell_length_c=CIF.cell_length_c(self.mof.cell.c))
+        c.add_data("cell", _cell_angle_alpha=CIF.cell_angle_alpha(self.mof.cell.alpha))
+        c.add_data("cell", _cell_angle_beta=CIF.cell_angle_beta(self.mof.cell.beta))
+        c.add_data("cell", _cell_angle_gamma=CIF.cell_angle_gamma(self.mof.cell.gamma))
+
+        "atom loop"
+        "_atom_site_fragment"
+        labels, indices = [], []
+        fcoords = []
+        for order, i in enumerate(self.fragments):
+            c.add_data("fragment", _chemical_identifier=CIF.label(order),
+                                   _chemical_name=CIF.label(i.name))
+            for id in i._orig_index:
+                # take original info from atom
+                indices.append(id)
+                atom = self.mof.atoms[id]
+                element = atom.type
+                label = c.get_element_label(element)
+                labels.append(label)
+                type = atom.uff_type
+                pos = atom.ifpos(self.icell)
+                fcoords.append(pos)
+                c.add_data("atoms", _atom_site_label=CIF.atom_site_label(label))
+                c.add_data("atoms", _atom_site_type_symbol=CIF.atom_site_type_symbol(element))
+                c.add_data("atoms", _atom_site_description=CIF.atom_site_description(type))
+                c.add_data("atoms", _atom_site_fragment=CIF.atom_site_fragment(order))
+                c.add_data("atoms", _atom_site_fract_x=CIF.atom_site_fract_x(pos[0]))
+                c.add_data("atoms", _atom_site_fract_y=CIF.atom_site_fract_y(pos[1]))
+                c.add_data("atoms", _atom_site_fract_z=CIF.atom_site_fract_z(pos[2]))
+        
+        supercells = np.array(list(itertools.product((-1,0,1), repeat=3)))
+        unit_repr = np.array([5,5,5], dtype=int)
+        for (at1, at2), type in self.mof.bonds.items():
+            atom1 = indices.index(at1)
+            atom2 = indices.index(at2)
+            label1 = labels[atom1]
+            label2 = labels[atom2]
+            test_coords = np.array([np.dot(i, self.cell) for i in fcoords[atom2] + supercells])
+            coord = np.dot(fcoords[atom1], self.cell)
+            dists = distance.cdist([coord], test_coords)
+            dists = dists[0].tolist()
+            dist = min(dists)
+            image = dists.index(dist)
+            sym = '.' if all([i==0 for i in supercells[image]]) else\
+                    "1_%i%i%i"%(tuple(np.array(supercells[image], dtype=int) + unit_repr))
+            c.add_data("bonds", 
+                _geom_bond_atom_site_label_1=CIF.geom_bond_atom_site_label_1(label1))
+            c.add_data("bonds", 
+                _geom_bond_atom_site_label_2=CIF.geom_bond_atom_site_label_2(label2))
+            c.add_data("bonds", 
+                _geom_bond_distance=CIF.geom_bond_distance(dist))
+            c.add_data("bonds", 
+                _geom_bond_site_symmetry_2=CIF.geom_bond_site_symmetry_2(sym))
+            c.add_data("bonds", 
+                _ccdc_geom_bond_type=CIF.ccdc_geom_bond_type(CCDC_BOND_ORDERS[type]))
+        
+        file = open("%s.cif"%(c.name), "w")
+        file.writelines(str(c))
+        file.close()
 
     def pickle_prune(self):
         """Delete extra data from net - so that the pickle file does not 

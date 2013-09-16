@@ -47,7 +47,11 @@ def main():
     # read in functional groups
     fnls = FunctionalGroups(options)
     nets, inchikeys = {}, {}
-    for mof_name in mofs.get('MOFname'):
+    for count, mof_name in enumerate(mofs.get('MOFname')):
+        if (count % options.pickle_write) == 0:
+            pickler(options, nets)
+            pickler(options, inchikeys, inchi=True)
+
         mof_name = clean(mof_name)
         mof = Structure(mof_name)
         try:
@@ -71,7 +75,9 @@ def main():
             net.get_nodes()
             # extra check if the unit cell is misrepresented.
             if net.prune_unit_cell():
+                # write cif file with fragment info
                 inchikeys.update(net.organic_data())
+                net.to_cif()
                 net.pickle_prune()
                 nets[net.name] = net
                 good_mofs.add_data(MOFname=mof_name)

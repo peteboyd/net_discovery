@@ -15,6 +15,7 @@ class Options(object):
     """Read in the options from the config file."""
     def __init__(self):
         # read in from the command line first
+        self.version = 0.1
         self.input_file = None
         self._command_options()
         self._init_logging()
@@ -142,7 +143,7 @@ class Options(object):
         """Returns the proper type based on the key used."""
         floats = ['tolerance']
         booleans = ['mofs_from_groin']
-        integers = ['report_frequency']
+        integers = ['report_frequency', 'pickle_write']
         lists = ['sbu_files', 'coord_unit_files', 'ignore_list']
         tuples = ['supercell']
         # known booleans
