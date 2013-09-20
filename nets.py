@@ -63,7 +63,7 @@ class Net(object):
                 generator = self.gen_cliques(clq, NO_H=False)
                 for clique in generator:
                     self.fragments.append(clique)
-                    clique.debug("fnls")
+                    #clique.debug("fnls")
 
         for sbu in sbu_list:
             sbu_cliques = []
@@ -76,7 +76,7 @@ class Net(object):
             for clique in generator:
                 # this line is why you need special identifiers for each node.
                 self.fragments.append(clique)
-                clique.debug("sbus")
+                #clique.debug("sbus")
         debug("There remains %i un-attached nodes. These will"%(len(clq.sub_graph)) +
                 " be ignored as they are considered fragments outside "+
                 "the periodic boundaries.")
@@ -341,7 +341,7 @@ class Net(object):
             # i don't care anymore.
             org_sbu.bonds = {}
             org_sbu.update_bonds(self.mof.bonds)
-            org_sbu.debug('org_sbu')
+            #org_sbu.debug('org_sbu')
             organic_dic.update({org_sbu.inchikey(): org_sbu.to_mol()})
         return organic_dic
 
@@ -396,8 +396,6 @@ class Net(object):
         c.add_data("cell", _cell_angle_beta=CIF.cell_angle_beta(self.mof.cell.beta))
         c.add_data("cell", _cell_angle_gamma=CIF.cell_angle_gamma(self.mof.cell.gamma))
 
-        "atom loop"
-        "_atom_site_fragment"
         labels, indices = [], []
         fcoords = []
         for order, i in enumerate(self.fragments):

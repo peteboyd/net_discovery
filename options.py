@@ -142,7 +142,7 @@ class Options(object):
     def get_val(self, section, key):
         """Returns the proper type based on the key used."""
         floats = ['tolerance']
-        booleans = ['mofs_from_groin']
+        booleans = ['mofs_from_groin', 'write_cifs']
         integers = ['report_frequency', 'pickle_write']
         lists = ['sbu_files', 'coord_unit_files', 'ignore_list']
         tuples = ['supercell']

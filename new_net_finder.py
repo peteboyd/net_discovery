@@ -77,7 +77,8 @@ def main():
             if net.prune_unit_cell():
                 # write cif file with fragment info
                 inchikeys.update(net.organic_data())
-                net.to_cif()
+                if options.write_cifs:
+                    net.to_cif()
                 net.pickle_prune()
                 nets[net.name] = net
                 good_mofs.add_data(MOFname=mof_name)

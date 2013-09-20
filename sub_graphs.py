@@ -45,7 +45,7 @@ class SubGraph(object):
         # shift the centre of atoms to the middle of the unit cell.
         supes = (cell.T * self.options.supercell).T
         isupes = np.linalg.inv(supes.T)
-        self.debug("supercell")
+        #self.debug("supercell")
         cou = np.sum(cell, axis=0)/2. 
         coa = np.sum(supes, axis=0)/2. 
         shift = coa - cou
@@ -55,7 +55,7 @@ class SubGraph(object):
         for i, cc in enumerate(self._coordinates):
             frac = np.array([k%1 for k in np.dot(isupes, cc)])
             self._coordinates[i] = np.dot(frac, supes)
-        self.debug("supercell")
+        #self.debug("supercell")
         # create supercell bond matrix
         for bond, val in struct.bonds.items():
             for mult, scell in enumerate(supercell):
@@ -65,7 +65,7 @@ class SubGraph(object):
         # shift the cell back??
         shift = cou - coa
         self._coordinates += shift
-        self.debug("supercell")
+        #self.debug("supercell")
 
     def compute_bonds(self):
         """Currently only implemented for the faps.Structure object"""
