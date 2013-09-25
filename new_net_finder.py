@@ -33,7 +33,7 @@ def pickler(options, dic, inchi=False):
     """write the dictionary to a pickle file"""
     pickle_name = clean(os.path.basename(options.input_file))
     pickle_name += "_inchi" if inchi else ""
-    pickle_file = open(pickle_name+".pkl", "wb")
+    pickle_file = open(pickle_name+".pkl", "ab")
     pickle.dump(dic, pickle_file)
     pickle_file.close()
 

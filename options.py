@@ -143,7 +143,7 @@ class Options(object):
         """Returns the proper type based on the key used."""
         floats = ['tolerance']
         booleans = ['mofs_from_groin', 'write_cifs']
-        integers = ['report_frequency', 'pickle_write']
+        integers = ['pickle_write']
         lists = ['sbu_files', 'coord_unit_files', 'ignore_list']
         tuples = ['supercell']
         # known booleans
@@ -216,8 +216,6 @@ class ColouredConsoleHandler(logging.StreamHandler):
 def clean(name):
     if name.startswith('./run_x'):
         name = name[10:]
-    if name.endswith('.cif'):
-        name = name[:-4]
     elif name.endswith('.niss'):
         name = name[:-5]
     elif name.endswith('.out-CO2.csv'):
@@ -228,6 +226,8 @@ def clean(name):
         name = name[:-5]
     elif name.endswith('.out.cif'):
         name = name[:-8]
+    if name.endswith('.cif'):
+        name = name[:-4]
     elif name.endswith('.out'):
         name = name[:-4]
     elif name.endswith('.tar'):

@@ -12,7 +12,6 @@ class CorrGraph(object):
         """Takes in a sub_graph"""
         self.options = options
         self.sub_graph = sub_graph
-        self.size = 0
         self.edge_count = 0
         self.nodes = None
         self.adj_matrix = None
@@ -26,17 +25,17 @@ class CorrGraph(object):
                                          copy=True, 
                                          order="C", 
                                          dtype=np.int32), 
-                                self.size)
-            
+                                         self.size)
+            clique = [self[i] for i in mc] 
             # set adj_matrix entries to zero.
             zero_inds = self.get_adj_indices(mc)
-            self.set_to_zero(zero_inds)
-
+            #self.set_to_zero(zero_inds)
+            self.delete_inds(zero_inds)
             t2 = time() - t1
             debug("clique found, length of clique = %i, "%(len(mc)) + 
                   "time reports %f seconds"%(t2))
 
-            yield mc
+            yield clique 
 
     def get_adj_indices(self, mc):
         """Due to the simple way in which the correspondence graph is
@@ -55,6 +54,17 @@ class CorrGraph(object):
         #set cols to zero
         for i in range(self.size):
             self.adj_matrix[i][inds] = self.adj_matrix[i][inds].clip(max=0)
+
+    def delete_inds(self, inds):
+        #set rows to zero
+        self.adj_matrix = np.delete(self.adj_matrix, inds, 0)
+        #set cols to zero
+        self.adj_matrix = np.delete(self.adj_matrix, inds, 1)
+        self.nodes = np.delete(self.nodes, inds, 0)
+
+    @property
+    def size(self):
+        return len(self.nodes)
 
     @property
     def pair_graph(self):
@@ -85,7 +95,6 @@ class CorrGraph(object):
                 itertools.product(range(len(sub1)), range(len(sub2)))
                 if sub1[x[0]] == sub2[x[1]]]
         self.nodes = [(ind, x[0], x[1]) for ind, x in enumerate(nodes)]
-        self.size = len(self.nodes)
         self.adj_matrix = np.zeros((self.size, self.size), dtype=np.int32)
         node_pairs = itertools.combinations(self.nodes, 2)
         for (n1, n11, n21),(n2, n12, n22) in node_pairs:
@@ -113,14 +122,17 @@ class CorrGraph(object):
         debug("Computing correspondence graph with %s"%sub2.name)
         t1 = time()
         self.nodes = mcqd.correspondence(sub1.elements, sub2.elements)
-        self.size = len(self.nodes)
-        adj_matrix = mcqd.correspondence_edges(self.nodes, 
+        if len(self._pair_graph) == 1:
+            adj_matrix = np.zeros((self.size, self.size), 
+                                  dtype=np.int32)
+        else:
+            adj_matrix = mcqd.correspondence_edges(self.nodes, 
                                                sub1.distances, 
                                                sub2.distances,
                                                self.options.tolerance)
         self.adj_matrix = np.array(adj_matrix, dtype=np.int32)
         self.nodes = [(i, j, k) for i, (j,k) in enumerate(self.nodes)]
-        self.edge_count = np.count_nonzero(self.nodes)
+        self.edge_count = np.count_nonzero(self.adj_matrix)
         t2 = time() - t1
         try:
             debug("Correspondence completed after %f seconds"%t2)

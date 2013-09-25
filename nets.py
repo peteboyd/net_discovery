@@ -206,12 +206,12 @@ class Net(object):
         clq.correspondence_api()
         mc = clq.extract_clique()
         remove = []
+        #replace = []
         while not done:
             #clq.correspondence()
             if not clq.size:
                 return
-            cc = mc.next()
-            sub_nodes = sorted([clq[i] for i in cc])
+            sub_nodes = sorted(mc.next())
             # get elements from sub_graph
             if NO_H:
                 elem = clq.sub_graph.get_elements(sub_nodes)
@@ -228,15 +228,23 @@ class Net(object):
                 # permanently remove these nodes from the sub_graph
                 # so they are not found by other iterations.
                 remove += sub_nodes
-                #clq.sub_graph.debug()
+                #for xx in reversed(sorted(sub_nodes)):
+                #    del clq.sub_graph[xx]
+
                 yield clique
             # in this instance we have found a clique not
             # belonging to the SBU. ignore
             elif len(all_elem) >= len(compare_elements):
                 pass
+                #replace.append(clq.sub_graph % sub_nodes)
+                #for xx in reversed(sorted(sub_nodes)):
+                #    del clq.sub_graph[xx]
             else:
+                #for sub in replace:
+                #    clq.sub_graph += sub
                 for xx in reversed(sorted(remove)):
                     del clq.sub_graph[xx]
+                #clq.sub_graph.debug()
                 done = True
 
     def parse_groin_mofname(self):
