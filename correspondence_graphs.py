@@ -1,4 +1,5 @@
 import numpy as np
+from memory_profiler import profile
 from time import time
 import sys
 import _mcqd as mcqd
@@ -15,7 +16,6 @@ class CorrGraph(object):
         self.edge_count = 0
         self.nodes = None
         self.adj_matrix = None
-
 
     def extract_clique(self):
         while 1:
@@ -113,7 +113,7 @@ class CorrGraph(object):
         except ZeroDivisionError:
             return
             #warning("No correspondence graph could be generated for %s"%sub2.name)
-
+    
     def correspondence_api(self):
 
         sub1 = self.sub_graph
@@ -123,14 +123,15 @@ class CorrGraph(object):
         t1 = time()
         self.nodes = mcqd.correspondence(sub1.elements, sub2.elements)
         if len(self._pair_graph) == 1:
-            adj_matrix = np.zeros((self.size, self.size), 
+            self.adj_matrix = np.zeros((self.size, self.size), 
                                   dtype=np.int32)
         else:
-            adj_matrix = mcqd.correspondence_edges(self.nodes, 
+            self.adj_matrix = np.array(mcqd.correspondence_edges(self.nodes, 
                                                sub1.distances, 
                                                sub2.distances,
-                                               self.options.tolerance)
-        self.adj_matrix = np.array(adj_matrix, dtype=np.int32)
+                                               self.options.tolerance),
+                                               dtype=np.int32)
+        #self.adj_matrix = np.array(adj_matrix, dtype=np.int32)
         self.nodes = [(i, j, k) for i, (j,k) in enumerate(self.nodes)]
         self.edge_count = np.count_nonzero(self.adj_matrix)
         t2 = time() - t1

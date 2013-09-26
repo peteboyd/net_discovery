@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from memory_profiler import profile
 import pickle
 import options
 import sys
@@ -33,9 +34,20 @@ def pickler(options, dic, inchi=False):
     """write the dictionary to a pickle file"""
     pickle_name = clean(os.path.basename(options.input_file))
     pickle_name += "_inchi" if inchi else ""
-    pickle_file = open(pickle_name+".pkl", "ab")
-    pickle.dump(dic, pickle_file)
-    pickle_file.close()
+    try:
+        picklefile = open(pickle_name + ".pkl", 'rb')
+        pdic = pickle.load(picklefile)
+        picklefile.close()
+
+        pdic.update(dic)
+        picklefile = open(pickle_name + ".pkl", 'wb')
+        pickle.dump(pdic, picklefile)
+        picklefile.close()
+    except IOError:
+        picklefile = open(pickle_name + ".pkl", 'wb')
+        pickle.dump(dic, picklefile)
+        picklefile.close()
+    dic = {}
 
 def main():
     mofs = CSV(options.csv_file)

@@ -247,6 +247,8 @@ class Net(object):
                 #clq.sub_graph.debug()
                 done = True
 
+        del clq
+
     def parse_groin_mofname(self):
         """metal, organic1, organic2, topology, functional group code"""
         ss = self.mof.name.split("_")
