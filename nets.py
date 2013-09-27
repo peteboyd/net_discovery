@@ -39,8 +39,12 @@ class Net(object):
     def get_groin_sbus(self, sbus):
         met, o1, o2, top, fnl = self.parse_groin_mofname()
         sbu_list = []
+        local_bus = [met, o1, o2]
+        # fix for a mistake when generating structures.
+        if (met == '9') and (o1 == '2' or o2 == '2'):
+            local_bus += ['15']
         for i, sbu in sbus.items():
-            if i.rstrip('s') in [met, o1, o2]:
+            if i.rstrip('s') in local_bus:
                 sbu.name = i
                 non_hydrogen_count = len([i for i in sbu.atoms 
                                       if i.element != "H"])
