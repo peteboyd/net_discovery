@@ -1,5 +1,5 @@
 import numpy as np
-from memory_profiler import profile
+#from memory_profiler import profile
 from time import time
 import sys
 import _mcqd as mcqd

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-from memory_profiler import profile
+#from memory_profiler import profile
 import pickle
 import options
 import sys
