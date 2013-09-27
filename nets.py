@@ -3,6 +3,7 @@ from sub_graphs import SubGraph, OrganicSBU
 from SecondaryBuildingUnit import SBU
 import itertools
 import ConfigParser
+import sys
 import os
 from plotter import GraphPlot
 import numpy as np
@@ -208,6 +209,9 @@ class Net(object):
         else:
             compare_elements = clq.pair_graph.get_elements(NO_H=False)
         clq.correspondence_api()
+        mem = (clq.adj_matrix.nbytes + sys.getsizeof(clq.nodes)) / 1.049e6
+        debug("Memory allocation for correspondence graph with %s"%(clq.pair_graph.name) +
+              " requires %9.3f Mb"%(mem))
         mc = clq.extract_clique()
         remove = []
         #replace = []

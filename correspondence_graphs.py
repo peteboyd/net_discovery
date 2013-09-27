@@ -6,7 +6,7 @@ import _mcqd as mcqd
 import itertools
 from logging import debug, warning
 
-np.set_printoptions(threshold='nan')
+#np.set_printoptions(threshold='nan')
 class CorrGraph(object):
     """Correspondence graph"""
     def __init__(self, options, sub_graph):
