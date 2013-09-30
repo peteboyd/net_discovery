@@ -81,7 +81,6 @@ def main():
         else:
             error("NO implementation yet for non-groin MOFs.")
             sys.exit()
-        net.fragments
         if net.evaluate_completeness():
             net.get_edges()
             net.get_nodes()
@@ -90,10 +89,14 @@ def main():
                 # write cif file with fragment info
                 inchikeys.update(net.organic_data())
                 if options.write_cifs:
-                    net.to_cif()
-                net.pickle_prune()
-                #nets[net.name] = net
-                good_mofs.add_data(MOFname=mof_name)
+                    if not net.to_cif():
+                        warning("Something went wrong writing the cif file for %s"%(
+                            net.name) + " Appending to 'bad mofs'")
+                        bad_mofs.add_data(MOFname=mof_name)
+                    else:
+                        net.pickle_prune()
+                        nets[net.name] = net
+                        good_mofs.add_data(MOFname=mof_name)
             else:
                 bad_mofs.add_data(MOFname=mof_name)
         else:

@@ -448,8 +448,11 @@ class Net(object):
         supercells = np.array(list(itertools.product((-1,0,1), repeat=3)))
         unit_repr = np.array([5,5,5], dtype=int)
         for (at1, at2), type in self.mof.bonds.items():
-            atom1 = indices.index(at1)
-            atom2 = indices.index(at2)
+            try:
+                atom1 = indices.index(at1)
+                atom2 = indices.index(at2)
+            except ValueError:
+                return False
             label1 = labels[atom1]
             label2 = labels[atom2]
             test_coords = np.array([np.dot(i, self.cell) for i in fcoords[atom2] + supercells])
@@ -474,6 +477,7 @@ class Net(object):
         file = open("%s.cif"%(c.name), "w")
         file.writelines(str(c))
         file.close()
+        return True
 
     def pickle_prune(self):
         """Delete extra data from net - so that the pickle file does not 
