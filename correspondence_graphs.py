@@ -2,8 +2,8 @@ import numpy as np
 #from memory_profiler import profile
 from time import time
 import sys
-import _mcqd as mcqd
 import itertools
+import _mcqd as mcqd
 from logging import debug, warning
 
 #np.set_printoptions(threshold='nan')
@@ -21,11 +21,8 @@ class CorrGraph(object):
         while 1:
             debug("Commencing maximum clique")
             t1 = time()
-            mc = mcqd.maxclique(np.array(self.adj_matrix, 
-                                         copy=True, 
-                                         order="C", 
-                                         dtype=np.int32), 
-                                         self.size)
+            mc = mcqd.maxclique(self.adj_matrix, 
+                                self.size)
             clique = [self[i] for i in mc] 
             # set adj_matrix entries to zero.
             zero_inds = self.get_adj_indices(mc)
@@ -61,6 +58,7 @@ class CorrGraph(object):
         #set cols to zero
         self.adj_matrix = np.delete(self.adj_matrix, inds, 1)
         self.nodes = np.delete(self.nodes, inds, 0)
+        self.edge_count = np.count_nonzero(self.adj_matrix)
 
     @property
     def size(self):
@@ -122,15 +120,13 @@ class CorrGraph(object):
         debug("Computing correspondence graph with %s"%sub2.name)
         t1 = time()
         self.nodes = mcqd.correspondence(sub1.elements, sub2.elements)
-        if len(self._pair_graph) == 1:
-            self.adj_matrix = np.zeros((self.size, self.size), 
-                                  dtype=np.int32)
-        else:
-            self.adj_matrix = np.array(mcqd.correspondence_edges(self.nodes, 
-                                               sub1.distances, 
-                                               sub2.distances,
-                                               self.options.tolerance),
-                                               dtype=np.int32)
+        self.adj_matrix = np.zeros((self.size, self.size), dtype=np.int32)
+        if len(self._pair_graph) > 1:
+            mcqd.correspondence_edges(self.nodes, 
+                                      sub1.distances,
+                                      sub2.distances,
+                                      self.options.tolerance,
+                                      self.adj_matrix)
         #self.adj_matrix = np.array(adj_matrix, dtype=np.int32)
         self.nodes = [(i, j, k) for i, (j,k) in enumerate(self.nodes)]
         self.edge_count = np.count_nonzero(self.adj_matrix)

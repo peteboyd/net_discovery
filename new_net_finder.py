@@ -48,7 +48,6 @@ def pickler(options, dic, inchi=False):
         pickle.dump(dic, picklefile)
         picklefile.close()
     dic = {}
-
 def main():
     mofs = CSV(options.csv_file)
     good_mofs = CSV(clean(options.input_file)+"_complete_nets.csv")
@@ -57,14 +56,14 @@ def main():
     # read in sbus
     sbus = read_sbu_files(options)
     # read in functional groups
-    fnls = FunctionalGroups(options)
+    moflist = [clean(i) for i in mofs.get('MOFname')] 
+    fnls = FunctionalGroups(options, moflist)
     nets, inchikeys = {}, {}
-    for count, mof_name in enumerate(mofs.get('MOFname')):
+    for count, mof_name in enumerate(moflist):
         if (count % options.pickle_write) == 0:
             pickler(options, nets)
             pickler(options, inchikeys, inchi=True)
 
-        mof_name = clean(mof_name)
         mof = Structure(mof_name)
         try:
             mof.from_file(os.path.join(options.lookup,
@@ -78,10 +77,11 @@ def main():
             ff = (None, None)
         net = Net(options, mof)
         if options.mofs_from_groin:
-            clq = net.from_groin_mof(sbus, ff)
+            net.from_groin_mof(sbus, ff)
         else:
             error("NO implementation yet for non-groin MOFs.")
             sys.exit()
+        net.fragments
         if net.evaluate_completeness():
             net.get_edges()
             net.get_nodes()
@@ -92,7 +92,7 @@ def main():
                 if options.write_cifs:
                     net.to_cif()
                 net.pickle_prune()
-                nets[net.name] = net
+                #nets[net.name] = net
                 good_mofs.add_data(MOFname=mof_name)
             else:
                 bad_mofs.add_data(MOFname=mof_name)

@@ -4,7 +4,7 @@ from sub_graphs import SubGraph
 
 class FunctionalGroups(object):
     
-    def __init__(self, options):
+    def __init__(self, options, moflist=None):
         self.options = options
         self._groups = {}
         self._group_lookup = {}
@@ -15,7 +15,7 @@ class FunctionalGroups(object):
                     " faps database, this may result in errors in the "+
                     "structure and take a VERY long time.")
         else:
-            self._get_functional_group_lookup()
+            self._get_functional_group_lookup(moflist)
 
     def _get_functional_subgraphs(self):
         fnl_lib = FunctionalGroupLibrary()
@@ -25,7 +25,7 @@ class FunctionalGroups(object):
                 sub.from_fnl(obj)
                 self._groups[name] = sub
 
-    def _get_functional_group_lookup(self):
+    def _get_functional_group_lookup(self, moflist):
         """Read in all the mofs and store in the dictionary."""
         path = os.path.abspath(self.options.sql_file)
         if not os.path.isfile(path):
@@ -38,6 +38,12 @@ class FunctionalGroups(object):
             # use a dictionary to sort the functionalizations
             groups = line[2]
             dic = {}
+            valid = False
+            if moflist:
+                if mof in moflist:
+                    valid = True
+            else:
+                valid = True
             if len(groups) > 0:
                 [dic.setdefault(i.split("@")[0], []).append(i.split("@")[1])
                         for i in groups.split(".")]
@@ -48,7 +54,8 @@ class FunctionalGroups(object):
                 fnl = dic.keys()
             else:
                 fnl = []
-            self._group_lookup[mof] = fnl
+            if valid:
+                self._group_lookup[mof] = fnl
         filestream.close()
 
     def get_functional_groups(self, mofname):

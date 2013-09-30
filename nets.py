@@ -11,7 +11,8 @@ from logging import debug, warning
 from scipy.spatial import distance
 from CIFer import CIF
 from elements import CCDC_BOND_ORDERS
-
+#from memory_profiler import profile
+np.set_printoptions(threshold='nan')
 class Net(object):
     # coordinating species
     species = {'m1':'carboxylate', 'm2':'carboxylate',
@@ -67,8 +68,11 @@ class Net(object):
                 clq.pair_graph = fnl
                 generator = self.gen_cliques(clq, NO_H=False)
                 for clique in generator:
+
+                    #print float(sys.getsizeof(self.fragments))/ 1.049e6, " Mb"
                     self.fragments.append(clique)
                     #clique.debug("fnls")
+
 
         for sbu in sbu_list:
             sbu_cliques = []
@@ -86,6 +90,7 @@ class Net(object):
                 " be ignored as they are considered fragments outside "+
                 "the periodic boundaries.")
         self.get_dangling_hydrogens(clq.sub_graph)
+        del clq
 
     def evaluate_completeness(self):
         """Check against the original MOF to ensure that all atoms
@@ -208,7 +213,11 @@ class Net(object):
             compare_elements = clq.pair_graph.get_elements()
         else:
             compare_elements = clq.pair_graph.get_elements(NO_H=False)
-        clq.correspondence_api()
+
+        # FUCKING MEMORY LEAKS
+        #clq.correspondence_api()
+        clq.correspondence()
+
         mem = (clq.adj_matrix.nbytes + sys.getsizeof(clq.nodes)) / 1.049e6
         debug("Memory allocation for correspondence graph with %s"%(clq.pair_graph.name) +
               " requires %9.3f Mb"%(mem))
@@ -255,7 +264,6 @@ class Net(object):
                 #clq.sub_graph.debug()
                 done = True
 
-        del clq
 
     def parse_groin_mofname(self):
         """metal, organic1, organic2, topology, functional group code"""

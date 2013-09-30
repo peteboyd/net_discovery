@@ -149,6 +149,7 @@ class SubGraph(object):
         sub._dmatrix = np.zeros((size, size), dtype=np.float64)
         for x, y in itertools.combinations(range(size), 2):
             sub._dmatrix[x][y] = self.distances[array[x]][array[y]]
+            sub._dmatrix[y][x] = self.distances[array[y]][array[x]]
         sub.elements = [self[x] for x in array]
         sub._coordinates = np.array([self._coordinates[x] for x in array],
                                     dtype=np.float64)
