@@ -214,9 +214,8 @@ class Net(object):
         else:
             compare_elements = clq.pair_graph.get_elements(NO_H=False)
 
-        # FUCKING MEMORY LEAKS
-        #clq.correspondence_api()
-        clq.correspondence()
+        clq.correspondence_api()
+        #clq.correspondence()
 
         mem = (clq.adj_matrix.nbytes + sys.getsizeof(clq.nodes)) / 1.049e6
         debug("Memory allocation for correspondence graph with %s"%(clq.pair_graph.name) +
@@ -228,6 +227,7 @@ class Net(object):
             #clq.correspondence()
             if not clq.size:
                 return
+
             sub_nodes = sorted(mc.next())
             # get elements from sub_graph
             if NO_H:

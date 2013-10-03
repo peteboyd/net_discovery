@@ -54,10 +54,13 @@ class CorrGraph(object):
 
     def delete_inds(self, inds):
         #set rows to zero
-        self.adj_matrix = np.delete(self.adj_matrix, inds, 0)
-        #set cols to zero
-        self.adj_matrix = np.delete(self.adj_matrix, inds, 1)
-        self.nodes = np.delete(self.nodes, inds, 0)
+        try:
+            self.adj_matrix = np.delete(self.adj_matrix, inds, 0)
+            #set cols to zero
+            self.adj_matrix = np.delete(self.adj_matrix, inds, 1)
+            self.nodes = np.delete(self.nodes, inds, 0)
+        except MemoryError:
+            self.adj_matrix = np.zeros((self.size,self.size))
         self.edge_count = np.count_nonzero(self.adj_matrix)
 
     @property
@@ -120,13 +123,17 @@ class CorrGraph(object):
         debug("Computing correspondence graph with %s"%sub2.name)
         t1 = time()
         self.nodes = mcqd.correspondence(sub1.elements, sub2.elements)
-        self.adj_matrix = np.zeros((self.size, self.size), dtype=np.int32)
         if len(self._pair_graph) > 1:
-            mcqd.correspondence_edges(self.nodes, 
+            self.adj_matrix = mcqd.correspondence_edges(self.nodes, 
                                       sub1.distances,
                                       sub2.distances,
-                                      self.options.tolerance,
-                                      self.adj_matrix)
+                                      self.options.tolerance)
+        else:
+            self.adj_matrix = np.zeros((self.size, self.size), dtype=np.int32)
+
+        if self.adj_matrix is None:
+            # catch memory error
+            return
         #self.adj_matrix = np.array(adj_matrix, dtype=np.int32)
         self.nodes = [(i, j, k) for i, (j,k) in enumerate(self.nodes)]
         self.edge_count = np.count_nonzero(self.adj_matrix)
