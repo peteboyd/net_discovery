@@ -216,8 +216,11 @@ class Net(object):
 
         clq.correspondence_api()
         #clq.correspondence()
-
-        mem = (clq.adj_matrix.nbytes + sys.getsizeof(clq.nodes)) / 1.049e6
+        try:
+            mem = (clq.adj_matrix.nbytes + sys.getsizeof(clq.nodes)) / 1.049e6
+        except AttributeError:
+            mem = 0.0
+            clq.adj_matrix = np.zeros(1)
         debug("Memory allocation for correspondence graph with %s"%(clq.pair_graph.name) +
               " requires %9.3f Mb"%(mem))
         mc = clq.extract_clique()
