@@ -221,6 +221,7 @@ class Net(object):
         except AttributeError:
             mem = 0.0
             clq.adj_matrix = np.zeros(1)
+            return 
         debug("Memory allocation for correspondence graph with %s"%(clq.pair_graph.name) +
               " requires %9.3f Mb"%(mem))
         mc = clq.extract_clique()
