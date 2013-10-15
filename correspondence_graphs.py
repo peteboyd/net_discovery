@@ -60,7 +60,8 @@ class CorrGraph(object):
             self.adj_matrix = np.delete(self.adj_matrix, inds, 1)
             self.nodes = np.delete(self.nodes, inds, 0)
         except MemoryError:
-            self.adj_matrix = np.zeros((self.size,self.size))
+            self.size = 3
+            self.adj_matrix = np.zeros((3,3))
         self.edge_count = np.count_nonzero(self.adj_matrix)
 
     @property

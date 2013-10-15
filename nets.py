@@ -7,12 +7,15 @@ import sys
 import os
 from plotter import GraphPlot
 import numpy as np
+from copy import copy
 from logging import debug, warning
 from scipy.spatial import distance
 from CIFer import CIF
 from elements import CCDC_BOND_ORDERS
+from element_properties import METALS
 #from memory_profiler import profile
 np.set_printoptions(threshold='nan')
+
 class Net(object):
     # coordinating species
     species = {'m1':'carboxylate', 'm2':'carboxylate',
@@ -34,9 +37,79 @@ class Net(object):
         self.edge_vectors = None
         self.edge_matrix = None
         self.main_sub_graph = SubGraph(self.options, self.mof.name)
+        self.cutted_bonds = {}
+        self.fragmented_sub_graph = [] 
         if options.mofs_from_groin:
             self.main_sub_graph.from_faps(mof)
-            self.main_sub_graph.compute_bonds()
+            self.main_sub_graph.compute_bonds(options.supercell*self.cell)
+
+    def cut_sub_graph_by_coordination(self):
+        """Cuts the bonds between coordinating groups and the SBUs.
+        This allows a more memory-efficient way of finding the SBUs.
+        """
+        organic_dic = {}
+        coord_units = self.coordination_units
+        met, k, k, k, k = self.parse_groin_mofname()
+        # special cases - cut by N-Metal bond.
+        n_bond = ['m2', 'm3']
+        clq = CorrGraph(self.options, copy(self.main_sub_graph))
+        unit = coord_units[self.species[met]]
+        clq.pair_graph = unit
+        cliques = self.gen_cliques(clq)
+        for clique in cliques:
+            # get atoms which are bonded to the clique
+            atoms = self.main_sub_graph.get_bonding_atoms(clique._new_index)
+            # identify the SBU cutting bond
+            cut_bond = self.get_inter_sbu_bond(clique._new_index, atoms, met)
+            # cut the bond
+            self.cutted_bonds[cut_bond] = self.main_sub_graph.bonds.pop(cut_bond)
+
+        if met in n_bond:
+            self.cut_metal_nitrogen_bond()
+
+    def cut_metal_nitrogen_bond(self):
+        # find the N-coordinating ligands
+        for atom in range(len(self.main_sub_graph)):
+            if self.main_sub_graph[atom] in METALS:
+                atoms = self.main_sub_graph.get_bonding_atoms([atom])
+                for at in atoms:
+                    if self.main_sub_graph[at] == "N":
+                        cut_bond = tuple(sorted([at, atom]))
+                        self.cutted_bonds[cut_bond] = self.main_sub_graph.bonds.pop(cut_bond)
+
+    def get_inter_sbu_bond(self, atoms1, atoms2, met):
+        """Return the two atoms which are bonded via an sbu bond."""
+        elem = self.main_sub_graph.elements
+        # elem 1 should always (?) be the non-metallic atom
+        # elem 2 should always (?) be a carbon atom.
+        for at1, at2 in itertools.product(atoms1, atoms2):
+            if met == 'm10':
+                coord_atom = "P"
+            else:
+                coord_atom = "C"
+            if elem[at1] == coord_atom and elem[at2] == "C":
+                b = tuple([at1, at2])
+                try:
+                    self.main_sub_graph.bonds[b]
+                    return b
+                except KeyError:
+                    return tuple([at2, at1])
+
+    def fragmentate(self):
+        done = False
+        atoms = range(len(self.main_sub_graph))
+        while not done:
+            atid = atoms[0]
+            frag = self.main_sub_graph.fragmentizer(atid, r=[], q=[])
+            sub_g = self.main_sub_graph % frag
+            self.fragmented_sub_graph.append(sub_g)
+            frag_ids = [atoms.index(i) for i in frag]
+            for k in reversed(sorted(frag_ids)):
+                atoms.pop(k)
+            if not atoms:
+                done = True
+        # re-instate the cutted bonds
+        self.main_sub_graph.bonds.update(self.cutted_bonds)
 
     def get_groin_sbus(self, sbus):
         met, o1, o2, top, fnl = self.parse_groin_mofname()
@@ -53,12 +126,23 @@ class Net(object):
                 sbu_list.append((non_hydrogen_count, sbu))
         return [i[1] for i in reversed(sorted(sbu_list))]
 
-    def from_groin_mof(self, sbus, fnls):
+    def from_fragmentated_mof(self, sbus, fnls):
+        """Extract from fragments"""
+        sbu_list = self.get_groin_sbus(sbus)
+        for frag in self.fragmented_sub_graph:
+            self.extract_fragments(sbus, fnls, frag=frag)
+
+    def extract_fragments(self, sbus, fnls, frag=None):
         """Extract the sbus from groin mofs."""
         debug("Size of mof = %i"%(len(self.mof.atoms)))
         sbu_list = self.get_groin_sbus(sbus)
-        sub_graph_copy = self.main_sub_graph % range(len(self.main_sub_graph))
-        clq = CorrGraph(self.options, sub_graph_copy)
+        if frag is None:
+            sub_graph_copy = self.main_sub_graph % range(len(self.main_sub_graph))
+            clq = CorrGraph(self.options, sub_graph_copy)
+        else:
+            sub_graph_copy = frag % range(len(frag))
+            clq = CorrGraph(self.options, sub_graph_copy)
+            
         # get the sbus and functional groups, sort them
         # by length, then extract all the maximal cliques
         # above a certain value.
@@ -68,11 +152,9 @@ class Net(object):
                 clq.pair_graph = fnl
                 generator = self.gen_cliques(clq, NO_H=False)
                 for clique in generator:
-
                     #print float(sys.getsizeof(self.fragments))/ 1.049e6, " Mb"
                     self.fragments.append(clique)
                     #clique.debug("fnls")
-
 
         for sbu in sbu_list:
             sbu_cliques = []

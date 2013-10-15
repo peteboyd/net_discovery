@@ -7,6 +7,7 @@ from faps import Structure
 from function_switch import FunctionalGroupLibrary, FunctionalGroup
 from SecondaryBuildingUnit import SBU
 import pybel
+import sys
 pybel.ob.obErrorLog.StopLogging()
 
 class SubGraph(object):
@@ -31,17 +32,17 @@ class SubGraph(object):
         self._new_index = range(size*multiplier)
         supercell = list(itertools.product(*[itertools.product(range(j)) for j in
                     self.options.supercell]))
-        
+        atom_size = 0
         for id, atom in enumerate(struct.atoms):
 
             for mult, scell in enumerate(supercell):
+                atom_size += 1
                 # keep symmetry translated index
                 self._orig_index[id + mult * size] = id
-                self._new_index[id + mult * size] = id+mult*size
                 self.elements[id + mult * size] = atom.element    
                 fpos = atom.ifpos(inv_cell) + np.array([float(i[0]) for i in scell])
                 self._coordinates[id + mult * size][:] = np.dot(fpos, cell)
-
+        self._new_index = range(atom_size)
         # shift the centre of atoms to the middle of the unit cell.
         supes = (cell.T * self.options.supercell).T
         isupes = np.linalg.inv(supes.T)
@@ -60,32 +61,48 @@ class SubGraph(object):
         for bond, val in struct.bonds.items():
             for mult, scell in enumerate(supercell):
                 b1 = bond[0] + mult*size 
-                b2 = bond[1] + mult*size 
+                b2 = bond[1] + mult*size
                 self.bonds[(b1,b2)] = val
         # shift the cell back??
         shift = cou - coa
         self._coordinates += shift
         #self.debug("supercell")
 
-    def compute_bonds(self):
-        """Currently only implemented for the faps.Structure object"""
+    def compute_bonds(self, cell):
+        """Shifts bonds by a periodic boundary. This is so that the right
+        atoms are bonded together in the supercell."""
+        icell = np.linalg.inv(cell.T)
         for (b1, b2), val in self.bonds.items():
-            # try other b2s, then other b1's
-            b2_image = self._orig_index[b2]
+            # take each b1 atom and shift by the min img convention.
+            # find min distances.
+            f = np.dot(icell, self._coordinates[b1])
+            # get all the images of the bonding atom
             b2_images = [i for i, j in enumerate(self._orig_index) 
-                         if j == b2_image]
+                         if j == self._orig_index[b2]]
+            assert b2 in b2_images
+            # convert to fractional coordinates
+            b2_fractals = np.array([np.dot(icell, i) for i in 
+                                    self._coordinates[b2_images]])
+            # shift fractionals to within a boundary box of b1
+            shifted = b2_fractals + np.around(f - b2_fractals) 
+            # gather distances
+            dist = distance.cdist([f], shifted)[0]
+            # find minimum distance index of all images
+            id = np.where(dist==np.amin(dist))[0][0]
+            bond = tuple([b1, b2_images[id]])
+            if bond not in self.bonds.keys():
+                self.bonds.pop((b1, b2))
+                self.bonds[bond] = val
 
-            img2 = min([(self.distances[b1][i],i) for i in b2_images])[1]
-            b1_image = self._orig_index[b1]
-            b1_images = [i for i, j in enumerate(self._orig_index) 
-                         if j == b1_image]
-            img1 = min([(self.distances[b2][i],i) for i in b1_images])[1]
-            if tuple(sorted([b1, img2])) not in self.bonds.keys():
-                self.bonds.pop((b1, b2))
-                self.bonds[tuple(sorted([b1, img2]))] = val
-            elif tuple(sorted([b2, img1])) not in self.bonds.keys():
-                self.bonds.pop((b1, b2))
-                self.bonds[tuple(sorted([b2, img1]))] = val
+    def fragmentizer(self, at, r=[], q=[]):
+        r.append(at)
+        bonds = self.get_bonding_atoms([at])
+        bonds = [i for i in bonds if i not in q + r]
+        q += bonds
+        if not q:
+            return r
+        else:
+            return self.fragmentizer(q[0], r, q[1:])
 
     def from_fnl(self, obj):
         size = len(obj.atoms)
@@ -106,6 +123,18 @@ class SubGraph(object):
             self._new_index.append(id)
             self.elements[id] = atom.element
             self._coordinates[id][:] = atom.coordinates[:3]
+
+    def get_bonding_atoms(self, indices):
+        ret_array = []
+        for (i1, i2) in self.bonds.keys():
+            if i1 in indices:
+                if i2 not in indices:
+                    ret_array.append(i2)
+            if i2 in indices:
+                if i1 not in indices:
+                    ret_array.append(i1)
+        return ret_array
+
     @property
     def elements(self):
         self._elements = []
@@ -155,8 +184,21 @@ class SubGraph(object):
                                     dtype=np.float64)
         sub._orig_index = [self._orig_index[x] for x in array]
         sub._new_index = [self._new_index[x] for x in array]
-        sub.bonds = {(i1,i2):val for (i1, i2), val in self.bonds.items() if i1 in 
-                        sub._new_index and i2 in sub._new_index}
+        #sub.bonds = {(i1,i2):val for (i1, i2), val in self.bonds.items() if i1 in 
+        #                sub._new_index and i2 in sub._new_index}
+        sub.bonds = self.bonds.copy()
+        return sub
+
+    def __copy__(self):
+        sub = SubGraph(self.options, name=self.name)
+        try:
+            sub._dmatrix = self._dmatrix.copy()
+        except AttributeError:
+            pass
+        sub.elements = self.elements[:] 
+        sub._coordinates = self._coordinates.copy() 
+        sub._orig_index = self._orig_index[:] 
+        sub._new_index = self._new_index[:]
         sub.bonds = self.bonds.copy()
         return sub
 
