@@ -108,6 +108,10 @@ class SubGraph(object):
         else:
             return self.fragmentizer(q[0], r, q[1:])
 
+    def set_elem_to_C(self):
+        for id, atom in enumerate(self.elements):
+            self.elements[id] = "C"
+
     def from_fnl(self, obj):
         size = len(obj.atoms)
         self._coordinates = np.empty((size, 3), dtype=np.float64)

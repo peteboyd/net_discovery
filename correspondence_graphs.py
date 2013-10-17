@@ -9,7 +9,7 @@ from logging import debug, warning
 #np.set_printoptions(threshold='nan')
 class CorrGraph(object):
     """Correspondence graph"""
-    def __init__(self, options=None, sub_graph=sub_graph):
+    def __init__(self, options=None, sub_graph=None):
         """Takes in a sub_graph"""
         self.options = options
         self.sub_graph = sub_graph
@@ -59,7 +59,7 @@ class CorrGraph(object):
             #set cols to zero
             self.adj_matrix = np.delete(self.adj_matrix, inds, 1)
             self.nodes = np.delete(self.nodes, inds, 0)
-        except MemoryError:
+        except (MemoryError, IndexError) as e:
             self.nodes = []
 
             self.adj_matrix = np.zeros((3,3))

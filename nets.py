@@ -109,7 +109,6 @@ class Net(object):
         atoms = range(len(self.main_sub_graph))
         while not done:
             atid = atoms[0]
-            # PETE - THIS IS CAUSING RESURSION DEPTH ERRORS WITH M10 - FIGURE OUT WHY.
             sys.setrecursionlimit(10000)
             try:
                 frag = self.main_sub_graph.fragmentizer(atid, r=[], q=[])
@@ -147,9 +146,10 @@ class Net(object):
     def from_fragmentated_mof(self, sbus, fnls):
         """Extract from fragments"""
         sbu_list = self.get_groin_sbus(sbus)
+        id = 0
         for frag in self.fragmented_sub_graph:
-
             self.extract_fragments(sbus, fnls, frag=frag)
+            id+= 1
 
     def extract_fragments(self, sbus, fnls, frag=None):
         """Extract the sbus from groin mofs."""
@@ -330,6 +330,9 @@ class Net(object):
         while not done:
             #clq.correspondence()
             if not clq.size:
+                for xx in reversed(sorted(remove)):
+                    del clq.sub_graph[xx]
+                remove = []
                 return
 
             sub_nodes = sorted(mc.next())
@@ -348,7 +351,7 @@ class Net(object):
                 clique.name = clq.pair_graph.name
                 # permanently remove these nodes from the sub_graph
                 # so they are not found by other iterations.
-                remove += sub_nodes
+                remove += sub_nodes[:]
                 #for xx in reversed(sorted(sub_nodes)):
                 #    del clq.sub_graph[xx]
 
@@ -366,6 +369,7 @@ class Net(object):
                 for xx in reversed(sorted(remove)):
                     del clq.sub_graph[xx]
                 #clq.sub_graph.debug()
+                remove = []
                 done = True
 
 
