@@ -55,14 +55,16 @@ class Net(object):
         clq = CorrGraph(self.options, copy(self.main_sub_graph))
         unit = coord_units[self.species[met]]
         clq.pair_graph = unit
-        cliques = self.gen_cliques(clq)
+        cliques = self.gen_cliques(clq, NO_H=False)
         for clique in cliques:
+            #clique.debug('coordinator')
             # get atoms which are bonded to the clique
             atoms = self.main_sub_graph.get_bonding_atoms(clique._new_index)
             # identify the SBU cutting bond
             cut_bond = self.get_inter_sbu_bond(clique._new_index, atoms, met)
             # cut the bond
-            self.cutted_bonds[cut_bond] = self.main_sub_graph.bonds.pop(cut_bond)
+            if cut_bond is not None:
+                self.cutted_bonds[cut_bond] = self.main_sub_graph.bonds.pop(cut_bond)
 
         if met in n_bond:
             self.cut_metal_nitrogen_bond()
@@ -74,8 +76,12 @@ class Net(object):
                 atoms = self.main_sub_graph.get_bonding_atoms([atom])
                 for at in atoms:
                     if self.main_sub_graph[at] == "N":
-                        cut_bond = tuple(sorted([at, atom]))
-                        self.cutted_bonds[cut_bond] = self.main_sub_graph.bonds.pop(cut_bond)
+                        cut_bond = tuple([at, atom])
+                        try:
+                            self.cutted_bonds[cut_bond] = self.main_sub_graph.bonds.pop(cut_bond)
+                        except KeyError:
+                            cut_bond = tuple([atom, at])
+                            self.cutted_bonds[cut_bond] = self.main_sub_graph.bonds.pop(cut_bond)
 
     def get_inter_sbu_bond(self, atoms1, atoms2, met):
         """Return the two atoms which are bonded via an sbu bond."""
@@ -87,20 +93,32 @@ class Net(object):
                 coord_atom = "P"
             else:
                 coord_atom = "C"
-            if elem[at1] == coord_atom and elem[at2] == "C":
-                b = tuple([at1, at2])
-                try:
-                    self.main_sub_graph.bonds[b]
-                    return b
-                except KeyError:
-                    return tuple([at2, at1])
+            if (at1, at2) in self.main_sub_graph.bonds.keys() or\
+                    (at2, at1) in self.main_sub_graph.bonds.keys():
+                
+                if elem[at1] == coord_atom and elem[at2] == "C":
+                    b = tuple([at1, at2])
+                    try:
+                        self.main_sub_graph.bonds[b]
+                        return b
+                    except KeyError:
+                        return tuple([at2, at1])
 
     def fragmentate(self):
         done = False
         atoms = range(len(self.main_sub_graph))
         while not done:
             atid = atoms[0]
-            frag = self.main_sub_graph.fragmentizer(atid, r=[], q=[])
+            # PETE - THIS IS CAUSING RESURSION DEPTH ERRORS WITH M10 - FIGURE OUT WHY.
+            sys.setrecursionlimit(10000)
+            try:
+                frag = self.main_sub_graph.fragmentizer(atid, r=[], q=[])
+            except MaximumRecursionDepth:
+                warning("Too high a recursion for the mof, returning..")
+                return
+            # PETE - CHECK IF THE VARIABLE FRAG IS DUPLICATED IN FRAGMENTED_SUB_GRAPH
+            # THERE IS SOME REASON WHY BOTH O1 AND O4 ARE BEING FOUND IN THE SAME
+            # FRAGMENT.
             sub_g = self.main_sub_graph % frag
             self.fragmented_sub_graph.append(sub_g)
             frag_ids = [atoms.index(i) for i in frag]
@@ -130,6 +148,7 @@ class Net(object):
         """Extract from fragments"""
         sbu_list = self.get_groin_sbus(sbus)
         for frag in self.fragmented_sub_graph:
+
             self.extract_fragments(sbus, fnls, frag=frag)
 
     def extract_fragments(self, sbus, fnls, frag=None):
@@ -143,10 +162,6 @@ class Net(object):
             sub_graph_copy = frag % range(len(frag))
             clq = CorrGraph(self.options, sub_graph_copy)
             
-        # get the sbus and functional groups, sort them
-        # by length, then extract all the maximal cliques
-        # above a certain value.
-
         if any(fnls):
             for fnl in fnls:
                 clq.pair_graph = fnl
@@ -155,7 +170,9 @@ class Net(object):
                     #print float(sys.getsizeof(self.fragments))/ 1.049e6, " Mb"
                     self.fragments.append(clique)
                     #clique.debug("fnls")
-
+        # get the sbus and functional groups, sort them
+        # by length, then extract all the maximal cliques
+        # above a certain value.
         for sbu in sbu_list:
             sbu_cliques = []
             # this should be called from another function - no need
@@ -168,6 +185,7 @@ class Net(object):
                 # this line is why you need special identifiers for each node.
                 self.fragments.append(clique)
                 #clique.debug("sbus")
+
         debug("There remains %i un-attached nodes. These will"%(len(clq.sub_graph)) +
                 " be ignored as they are considered fragments outside "+
                 "the periodic boundaries.")

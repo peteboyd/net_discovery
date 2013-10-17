@@ -12,7 +12,7 @@ pybel.ob.obErrorLog.StopLogging()
 
 class SubGraph(object):
 
-    def __init__(self, options, name="Default"):
+    def __init__(self, options=None, name="Default"):
         self.options = options
         self.name = name
         self._coordinates = None
@@ -20,18 +20,22 @@ class SubGraph(object):
         self._new_index = []
         self.bonds = {}
 
-    def from_faps(self, struct):
+    def from_faps(self, struct, supercell=(1,1,1)):
         cell = struct.cell.cell
         inv_cell = np.linalg.inv(cell.T)
         size = len(struct.atoms)
-        # number of cells 
-        multiplier = reduce(operator.mul, self.options.supercell, 1)
+        # number of cells
+        try:
+            sc = self.options.supercell
+        except AttributeError:
+            sc = supercell
+        multiplier = reduce(operator.mul, sc, 1)
         self._coordinates = np.empty((size*multiplier, 3), dtype=np.float64)
         self.elements = range(size*multiplier)
         self._orig_index = range(size*multiplier)
         self._new_index = range(size*multiplier)
         supercell = list(itertools.product(*[itertools.product(range(j)) for j in
-                    self.options.supercell]))
+                    sc]))
         atom_size = 0
         for id, atom in enumerate(struct.atoms):
 
@@ -44,7 +48,7 @@ class SubGraph(object):
                 self._coordinates[id + mult * size][:] = np.dot(fpos, cell)
         self._new_index = range(atom_size)
         # shift the centre of atoms to the middle of the unit cell.
-        supes = (cell.T * self.options.supercell).T
+        supes = (cell.T * sc).T
         isupes = np.linalg.inv(supes.T)
         #self.debug("supercell")
         cou = np.sum(cell, axis=0)/2. 

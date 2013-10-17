@@ -9,7 +9,7 @@ from logging import debug, warning
 #np.set_printoptions(threshold='nan')
 class CorrGraph(object):
     """Correspondence graph"""
-    def __init__(self, options, sub_graph):
+    def __init__(self, options=None, sub_graph=sub_graph):
         """Takes in a sub_graph"""
         self.options = options
         self.sub_graph = sub_graph
@@ -60,7 +60,8 @@ class CorrGraph(object):
             self.adj_matrix = np.delete(self.adj_matrix, inds, 1)
             self.nodes = np.delete(self.nodes, inds, 0)
         except MemoryError:
-            self.size = 3
+            self.nodes = []
+
             self.adj_matrix = np.zeros((3,3))
         self.edge_count = np.count_nonzero(self.adj_matrix)
 
@@ -86,7 +87,7 @@ class CorrGraph(object):
         del self._pair_graph
 
     # this is really slow. Maybe implement in c++?
-    def correspondence(self):
+    def correspondence(self, tol=0.1):
         self.edge_count = 0
         sub1 = self.sub_graph
         sub2 = self._pair_graph
@@ -99,9 +100,13 @@ class CorrGraph(object):
         self.nodes = [(ind, x[0], x[1]) for ind, x in enumerate(nodes)]
         self.adj_matrix = np.zeros((self.size, self.size), dtype=np.int32)
         node_pairs = itertools.combinations(self.nodes, 2)
+        try:
+            tolerance = self.options.tolerance
+        except AttributeError:
+            tolerance = tol
         for (n1, n11, n21),(n2, n12, n22) in node_pairs:
             if abs(sub1.distances[n11][n12] - 
-                    sub2.distances[n21][n22]) <= self.options.tolerance:
+                    sub2.distances[n21][n22]) <= tolerance:
                 
                 self.edge_count += 1
                 self.adj_matrix[n1][n2] = 1
@@ -116,19 +121,23 @@ class CorrGraph(object):
             return
             #warning("No correspondence graph could be generated for %s"%sub2.name)
     
-    def correspondence_api(self):
+    def correspondence_api(self, tol=0.1):
 
         sub1 = self.sub_graph
         sub2 = self._pair_graph
         debug("Size of base sub graph = %i"%len(self.sub_graph))
         debug("Computing correspondence graph with %s"%sub2.name)
         t1 = time()
+        try:
+            tolerance = self.options.tolerance
+        except AttributeError:
+            tolerance = tol
         self.nodes = mcqd.correspondence(sub1.elements, sub2.elements)
         if len(self._pair_graph) > 1:
             self.adj_matrix = mcqd.correspondence_edges(self.nodes, 
                                       sub1.distances,
                                       sub2.distances,
-                                      self.options.tolerance)
+                                      tolerance)
         else:
             self.adj_matrix = np.zeros((self.size, self.size), dtype=np.int32)
 
