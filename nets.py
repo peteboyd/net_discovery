@@ -453,7 +453,12 @@ class Net(object):
                     graph = n_frag % range(len(n_frag))
                     clq = CorrGraph(self.options, graph)
                     # the following assumes a groin mof
-                    clq.pair_graph = coord_units[self.species[met]]
+                    # PETE - FIX FOR M10 TO BE PHOSPHONATEESTER AND LARGE TOLERANCE
+                    if met == 'm10':
+                        clq.pair_graph = coord_units['phosphonateester']
+                        clq.options.tolerance = clq.options.tolerance*2.
+                    else:
+                        clq.pair_graph = coord_units[self.species[met]]
                     generator = self.gen_cliques(clq)
                     for g in generator:
                         btest = self.bond_exists(frag, g)
