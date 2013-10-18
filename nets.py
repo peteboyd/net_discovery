@@ -22,7 +22,8 @@ class Net(object):
                'm3':'carboxylate', 'm4':'carboxylate',
                'm5':'carboxylate', 'm6':'tetrazole',
                'm7':'carboxylate', 'm8':'carboxylate',
-               'm9':'carboxylate', 'm10':'phosphonateester',
+               'm9':'carboxylate', 'm10':'phosphonate',
+               #'m10':'phosphonateester',
                'm11':'carboxylate','m12':'pyrazole'}
 
     def __init__(self, options, mof):
