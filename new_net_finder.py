@@ -59,6 +59,9 @@ def test_run():
     fnls = FunctionalGroups(options, moflist)
     nets, inchikeys = {}, {}
     for count, mof_name in enumerate(moflist):
+        if (count % options.pickle_write) == 0:
+            pickler(options, nets)
+            pickler(options, inchikeys, inchi=True)
         mof = Structure(mof_name)
         try:
             mof.from_file(os.path.join(options.lookup,

@@ -143,6 +143,9 @@ class SubGraph(object):
                     ret_array.append(i1)
         return ret_array
 
+    def shift_by_vector(self, vector):
+        self._coordinates = self._coordinates - vector
+
     @property
     def elements(self):
         self._elements = []

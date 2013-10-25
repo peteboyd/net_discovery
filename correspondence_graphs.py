@@ -134,10 +134,13 @@ class CorrGraph(object):
             tolerance = tol
         self.nodes = mcqd.correspondence(sub1.elements, sub2.elements)
         if len(self._pair_graph) > 1:
-            self.adj_matrix = mcqd.correspondence_edges(self.nodes, 
+            try:
+                self.adj_matrix = mcqd.correspondence_edges(self.nodes, 
                                       sub1.distances,
                                       sub2.distances,
                                       tolerance)
+            except MemoryError:
+                self.adj_matrix = np.zeros((3,3), dtype=np.int32)
         else:
             self.adj_matrix = np.zeros((self.size, self.size), dtype=np.int32)
 
