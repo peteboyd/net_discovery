@@ -143,7 +143,7 @@ class Options(object):
         """Returns the proper type based on the key used."""
         floats = ['tolerance']
         booleans = ['mofs_from_groin', 'write_cifs']
-        integers = ['pickle_write']
+        integers = ['pickle_write', 'max_correspondence']
         lists = ['sbu_files', 'coord_unit_files', 'ignore_list']
         tuples = ['supercell']
         # known booleans

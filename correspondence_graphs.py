@@ -4,6 +4,7 @@ from time import time
 import sys
 import itertools
 import _mcqd as mcqd
+from collections import Counter
 from logging import debug, warning
 
 #np.set_printoptions(threshold='nan')
@@ -132,6 +133,21 @@ class CorrGraph(object):
             tolerance = self.options.tolerance
         except AttributeError:
             tolerance = tol
+
+        # check for correspondence size if asked in the input
+        if self.options.max_correspondence:
+            # compute the size of the correspondence graph based on 
+            # the similar elements.
+            size = self.compute_correspondence_size(sub1.elements,
+                                                    sub2.elements)
+            if size > self.options.max_correspondence:
+                debug("The size of the correspondence graph is %i,"%(size) +
+                        " which is greater than %i, so it will not be calculated"
+                        %(self.options.max_correspondence))
+                self.adj_matrix = np.zeros((3,3), dtype=np.int32)
+                self.nodes = []
+                return
+
         self.nodes = mcqd.correspondence(sub1.elements, sub2.elements)
         if len(self._pair_graph) > 1:
             try:
@@ -158,6 +174,16 @@ class CorrGraph(object):
                                     (float(self.size)*(float(self.size)-1))))
         except ZeroDivisionError:
             return
+    
+    def compute_correspondence_size(self, elem1, elem2):
+        # create dic keys and counts
+        e1, e2 = Counter(elem1), Counter(elem2)
+        result = 0
+        for key, e1val in e1.iteritems():
+            e2val = e2.get(key, None)
+            if e2val:
+                result += e2val*e1val
+        return result
 
     def __getitem__(self, i):
         """Return the indices of the first subgraph from the
