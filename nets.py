@@ -113,7 +113,7 @@ class Net(object):
             sys.setrecursionlimit(10000)
             try:
                 frag = self.main_sub_graph.fragmentizer(atid, r=[], q=[])
-            except MaximumRecursionDepth:
+            except RuntimeError:
                 warning("Too high a recursion for the mof, returning..")
                 return
             # PETE - CHECK IF THE VARIABLE FRAG IS DUPLICATED IN FRAGMENTED_SUB_GRAPH
