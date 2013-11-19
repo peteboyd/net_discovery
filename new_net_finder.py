@@ -49,7 +49,7 @@ def pickler(options, dic, inchi=False):
         picklefile.close()
     except MemoryError:
         picklefile = open(pickle_name + "_1" + ".pkl", 'wb')
-        pickle.dump(pdic, picklefile)
+        pickle.dump(dic, picklefile)
         picklefile.close()
 
     dic = {}
