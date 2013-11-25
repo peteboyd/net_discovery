@@ -134,16 +134,20 @@ class CorrGraph(object):
         except AttributeError:
             tolerance = tol
 
+        try:
+            max_tol = self.options.max_correspondence
+        except AttributeError:
+            max_tol = 0
         # check for correspondence size if asked in the input
-        if self.options.max_correspondence:
+        if max_tol: 
             # compute the size of the correspondence graph based on 
             # the similar elements.
             size = self.compute_correspondence_size(sub1.elements,
                                                     sub2.elements)
-            if size > self.options.max_correspondence:
+            if size > max_tol:
                 debug("The size of the correspondence graph is %i,"%(size) +
                         " which is greater than %i, so it will not be calculated"
-                        %(self.options.max_correspondence))
+                        %(max_tol))
                 self.adj_matrix = np.zeros((3,3), dtype=np.int32)
                 self.nodes = []
                 return
