@@ -244,10 +244,16 @@ class SubGraph(object):
 
     def debug(self, name="defile"):
         defile = open(name+".xyz", "a")
-        defile.writelines("%i\n%s\n"%(len(self), name))
+        defile.writelines("%i\n%s\n"%(len(self) + 3, name))
         for ind, (x, y, z) in enumerate(self._coordinates):
             defile.writelines("%s %12.5f %12.5f %12.5f\n"%(self[ind], x, y, z))
         defile.close()
+
+    def rotate(self, R):
+        self._coordinates = np.dot(R[:3,:3], self._coordinates.T).T
+
+    def shift_by_centre_of_atoms(self):
+        self._coordinates -= self.centre_of_atoms
 
 class OrganicSBU(SubGraph):
 
