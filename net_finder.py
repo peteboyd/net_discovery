@@ -20,7 +20,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import sys
-import pybel
+try:
+    import pybel
+    PYBEL=True
+except ImportError:
+    PYBEL=False
+
 import copy
 import time
 from random import choice
@@ -1533,9 +1538,12 @@ def main():
                     #molfile = open(underlying_net['nodes'][node]['label']+".mol","w")
                     #molfile.writelines(mol)
                     #molfile.close()
-                    smiles = get_smiles(mol).strip()
-                    inchi = get_inchi(mol).strip()
-                    inchikey = get_inchikey(mol).strip()
+                    if PYBEL:
+                        smiles = get_smiles(mol).strip()
+                        inchi = get_inchi(mol).strip()
+                        inchikey = get_inchikey(mol).strip()
+                    else:
+                        smiles, inchi, inchikey = "", "", ""
                     underlying_net['nodes'][node]['smiles'] = smiles
                     underlying_net['nodes'][node]['inchi'] = inchi
                     underlying_net['nodes'][node]['inchikey'] = inchikey
@@ -1552,9 +1560,13 @@ def main():
                     #molfile = open(underlying_net['nodes'][node]['label']+".mol","w")
                     #molfile.writelines(mol)
                     #molfile.close()
-                    smiles = get_smiles(mol).strip()
-                    inchi = get_inchi(mol).strip()
-                    inchikey = get_inchikey(mol).strip()
+                    if PYBEL:
+                        smiles = get_smiles(mol).strip()
+                        inchi = get_inchi(mol).strip()
+                        inchikey = get_inchikey(mol).strip()
+                    else:
+                        smiles, inchi, inchikey = "", "", ""
+
                     underlying_net['nodes'][node]['smiles'] = smiles
                     underlying_net['nodes'][node]['inchi'] = inchi
                     underlying_net['nodes'][node]['inchikey'] = inchikey

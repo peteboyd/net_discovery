@@ -4,11 +4,15 @@ import operator
 from scipy.spatial import distance
 from logging import debug
 from faps import Structure
-from function_switch import FunctionalGroupLibrary, FunctionalGroup
 from SecondaryBuildingUnit import SBU
-import pybel
+try:
+    import pybel
+    pybel.ob.obErrorLog.StopLogging()
+    PYBEL=True
+except ImportError:
+    PYBEL=False
+
 import sys
-pybel.ob.obErrorLog.StopLogging()
 
 class SubGraph(object):
 
@@ -244,7 +248,7 @@ class SubGraph(object):
 
     def debug(self, name="defile"):
         defile = open(name+".xyz", "a")
-        defile.writelines("%i\n%s\n"%(len(self) + 3, name))
+        defile.writelines("%i\n%s\n"%(len(self), name))
         for ind, (x, y, z) in enumerate(self._coordinates):
             defile.writelines("%s %12.5f %12.5f %12.5f\n"%(self[ind], x, y, z))
         defile.close()
