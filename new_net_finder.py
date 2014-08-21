@@ -14,6 +14,7 @@ sys.path.append(options.genstruct_dir)
 from SecondaryBuildingUnit import SBU
 sys.path.append(options.max_clique_dir)
 from data_storage import CSV, FunctionalGroups
+from sqlbackend import SQLVertex, SQLEdge, SQLCell, DataStorage 
 from nets import Net
 
 def read_sbu_files(options):
@@ -30,6 +31,14 @@ def read_sbu_files(options):
             sbus[name] = sbu
     return sbus
 
+def store_net(net, sql):
+    sql.store(SQLNet(net.name))
+    sql.store(SQLCell(net.mof.cell.params, net.name))
+    for name, pos in net.nodes:
+        sql.store(SQLVertex(pos[:3], name, net.name))
+    for origin, vector in net.edge_vectors:
+        sql.store(SQLEdge(vector[:3], origin[:3], net.name))
+
 def test_run():
     mofs = CSV(options.csv_file)
     mofs.read()
@@ -38,11 +47,14 @@ def test_run():
     sbus = read_sbu_files(options)
     moflist = [clean(i) for i in mofs.get('MOFname')] 
     fnls = FunctionalGroups(options, moflist)
-    nets, inchikeys = {}, {}
+    if options.store_db:
+        sqlfile=options.store_db
+    else:
+        sqlfile=options.input_file
+    sql = DataStorage(sqlfile)
+
+    #inchikeys = {}
     for count, mof_name in enumerate(moflist):
-        if (count % options.pickle_write) == 0:
-            pickler(options, nets)
-            pickler(options, inchikeys, inchi=True)
         mof = Structure(mof_name)
         try:
             mof.from_file(os.path.join(options.lookup,
@@ -67,15 +79,14 @@ def test_run():
             # extra check if the unit cell is misrepresented.
             if net.prune_unit_cell():
                 # write cif file with fragment info
-                inchikeys.update(net.organic_data())
+                #inchikeys.update(net.organic_data())
                 if options.write_cifs:
                     if not net.to_cif():
                         warning("Something went wrong writing the cif file for %s"%(
                             net.name) + " Appending to 'bad mofs'")
                         bad_mofs.add_data(MOFname=mof_name)
                     else:
-                        net.pickle_prune()
-                        nets[net.name] = net
+                        store_net(net, sql)
                         good_mofs.add_data(MOFname=mof_name)
             else:
                 bad_mofs.add_data(MOFname=mof_name)
@@ -83,8 +94,6 @@ def test_run():
             info("The underlying net of MOF %s could not be found"%(mof_name))
             bad_mofs.add_data(MOFname=mof_name)
 
-    pickler(options, nets)
-    pickler(options, inchikeys, inchi=True)
     good_mofs.write()
     bad_mofs.write()
 
