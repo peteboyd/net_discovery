@@ -22,6 +22,7 @@ class SubGraph(object):
         self._coordinates = None
         self._orig_index = []
         self._new_index = []
+        self.charges = []
         self.bonds = {}
 
     def from_faps(self, struct, supercell=(1,1,1)):
@@ -36,19 +37,25 @@ class SubGraph(object):
         multiplier = reduce(operator.mul, sc, 1)
         self._coordinates = np.empty((size*multiplier, 3), dtype=np.float64)
         self.elements = range(size*multiplier)
+        self.charges = range(size*multiplier)
         self._orig_index = range(size*multiplier)
         self._new_index = range(size*multiplier)
         supercell = list(itertools.product(*[itertools.product(range(j)) for j in
                     sc]))
         atom_size = 0
+        dd = np.array(sc) - np.array([1, 1, 1])
+        cell_shift = np.floor(np.median(np.vstack((dd, np.array([0,0,0]))), axis=0)) 
         for id, atom in enumerate(struct.atoms):
 
             for mult, scell in enumerate(supercell):
                 atom_size += 1
+                
                 # keep symmetry translated index
                 self._orig_index[id + mult * size] = id
-                self.elements[id + mult * size] = atom.element    
-                fpos = atom.ifpos(inv_cell) + np.array([float(i[0]) for i in scell])
+                self.elements[id + mult * size] = atom.element
+                self.charges[id + mult * size] = atom.charge
+                scell = [float(i[0]) for i in scell]
+                fpos = atom.ifpos(inv_cell) + np.array(scell, dtype=float) - cell_shift
                 self._coordinates[id + mult * size][:] = np.dot(fpos, cell)
         self._new_index = range(atom_size)
         # shift the centre of atoms to the middle of the unit cell.
@@ -197,6 +204,8 @@ class SubGraph(object):
         sub.elements = [self[x] for x in array]
         sub._coordinates = np.array([self._coordinates[x] for x in array],
                                     dtype=np.float64)
+        if self.charges:
+            sub.charges = [self.charges[x] for x in array]
         sub._orig_index = [self._orig_index[x] for x in array]
         sub._new_index = [self._new_index[x] for x in array]
         #sub.bonds = {(i1,i2):val for (i1, i2), val in self.bonds.items() if i1 in 
