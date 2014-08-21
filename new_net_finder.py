@@ -30,30 +30,6 @@ def read_sbu_files(options):
             sbus[name] = sbu
     return sbus
 
-def pickler(options, dic, inchi=False):
-    """write the dictionary to a pickle file"""
-    pickle_name = clean(os.path.basename(options.input_file))
-    pickle_name += "_inchi" if inchi else ""
-    try:
-        picklefile = open(pickle_name + ".pkl", 'rb')
-        pdic = pickle.load(picklefile)
-        picklefile.close()
-
-        pdic.update(dic)
-        picklefile = open(pickle_name + ".pkl", 'wb')
-        pickle.dump(pdic, picklefile)
-        picklefile.close()
-    except IOError:
-        picklefile = open(pickle_name + ".pkl", 'wb')
-        pickle.dump(dic, picklefile)
-        picklefile.close()
-    except MemoryError:
-        picklefile = open(pickle_name + "_1" + ".pkl", 'wb')
-        pickle.dump(dic, picklefile)
-        picklefile.close()
-
-    dic = {}
-
 def test_run():
     mofs = CSV(options.csv_file)
     mofs.read()
