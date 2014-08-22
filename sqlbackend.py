@@ -85,5 +85,6 @@ class DataStorage(object):
         self.session.add(obj)
 
     def flush(self):
+        self.session.flush()
         self.session.commit()
 

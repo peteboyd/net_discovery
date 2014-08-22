@@ -14,7 +14,7 @@ sys.path.append(options.genstruct_dir)
 from SecondaryBuildingUnit import SBU
 sys.path.append(options.max_clique_dir)
 from data_storage import CSV, FunctionalGroups
-from sqlbackend import SQLVertex, SQLEdge, SQLCell, DataStorage 
+from sqlbackend import SQLVertex, SQLEdge, SQLCell, SQLNet, DataStorage 
 from nets import Net
 
 def read_sbu_files(options):
@@ -56,6 +56,11 @@ def test_run():
     #inchikeys = {}
     for count, mof_name in enumerate(moflist):
         mof = Structure(mof_name)
+        # flush sql - using commands from legacy pickle stuff.
+        if (count % options.pickle_write) == 0:
+            debug("Flushing database to file..")
+            sql.flush()
+
         try:
             mof.from_file(os.path.join(options.lookup,
                          mof_name), "cif", '')
@@ -86,6 +91,7 @@ def test_run():
                             net.name) + " Appending to 'bad mofs'")
                         bad_mofs.add_data(MOFname=mof_name)
                     else:
+                        info("Complete net found! storing..")
                         store_net(net, sql)
                         good_mofs.add_data(MOFname=mof_name)
             else:
