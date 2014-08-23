@@ -35,7 +35,7 @@ def store_net(net, sql):
     sql.store(SQLNet(net.name))
     sql.store(SQLCell(net.mof.cell.params, net.name))
     for name, pos in net.nodes:
-        sql.store(SQLVertex(pos[:3], name, net.name))
+        sql.store(SQLVertex(pos, name, net.name))
     for origin, vector in net.edge_vectors:
         sql.store(SQLEdge(vector[:3], origin[:3], net.name))
 
@@ -57,10 +57,6 @@ def test_run():
     for count, mof_name in enumerate(moflist):
         mof = Structure(mof_name)
         # flush sql - using commands from legacy pickle stuff.
-        if (count % options.pickle_write) == 0:
-            debug("Flushing database to file..")
-            sql.flush()
-
         try:
             mof.from_file(os.path.join(options.lookup,
                          mof_name), "cif", '')
@@ -94,11 +90,20 @@ def test_run():
                         info("Complete net found! storing..")
                         store_net(net, sql)
                         good_mofs.add_data(MOFname=mof_name)
+                else:
+                    info("Complete net found! storing..")
+                    store_net(net, sql)
+                    good_mofs.add_data(MOFname=mof_name)
             else:
+                warning("Conflict with node images, appending to 'bad mofs'") 
                 bad_mofs.add_data(MOFname=mof_name)
         else:
             info("The underlying net of MOF %s could not be found"%(mof_name))
             bad_mofs.add_data(MOFname=mof_name)
+        if (count % options.pickle_write) == 0:
+            debug("Flushing database to file..")
+            sql.flush()
+
 
     good_mofs.write()
     bad_mofs.write()
