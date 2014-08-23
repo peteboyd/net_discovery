@@ -104,7 +104,7 @@ def test_run():
             debug("Flushing database to file..")
             sql.flush()
 
-
+    sql.flush()
     good_mofs.write()
     bad_mofs.write()
 
